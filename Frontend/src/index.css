@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== PRINT FIX ===== */
+@media print {
+  /* Reset everything for print */
+  * {
+    margin: 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  #root {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* Hide buttons and UI elements */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Hide the header, branch selector, etc */
+  header, 
+  .sticky,
+  .bg-gradient-to-r,
+  .flex.items-center.justify-between.mb-8,
+  .grid.grid-cols-1.lg\:grid-cols-3.gap-6 {
+    display: none !important;
+  }
+
+  /* Show only receipt container */
+  .max-w-2xl.mx-auto,
+  .bg-white.rounded-2xl.shadow-xl.p-6 {
+    all: unset !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 380px !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+
+  /* Remove all padding from receipt container */
+  .bg-white.rounded-2xl.shadow-xl.p-6 > div {
+    padding: 0 !important;
+  }
+
+  /* Main receipt area */
+  #receipt-print-area {
+    width: 100% !important;
+    max-width: 380px !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+
+  .receipt-content {
+    width: 100% !important;
+    padding: 8px !important;
+    margin: 0 !important;
+  }
+
+  /* Remove shadows and rounded corners */
+  .shadow-xl,
+  .shadow-md,
+  .shadow-lg {
+    box-shadow: none !important;
+  }
+
+  .rounded-2xl,
+  .rounded-xl,
+  .rounded-lg {
+    border-radius: 0 !important;
+  }
+
+  /* Ensure text is black and crisp */
+  * {
+    color: black !important;
+    background: transparent !important;
+  }
+
+  /* Table styling for print */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin: 4px 0 !important;
+  }
+
+  th, td {
+    border: 1px solid #ccc !important;
+    padding: 4px !important;
+    font-size: 10px !important;
+  }
+
+  /* Reduce spacing but preserve signature space */
+  .mb-6, .mb-4, .mb-2, .mt-6, .mt-4, .mt-2, .pt-4, .pb-4, .py-3 {
+    margin-top: 4px !important;
+    margin-bottom: 4px !important;
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+  }
+
+  /* Preserve signature margin - IMPORTANT FIX */
+  .mt-10 {
+    margin-top: 40px !important;
+  }
+  
+  /* Ensure signature section has proper spacing */
+  .receipt-content > div:last-child {
+    margin-top: 30px !important;
+  }
+
+  /* Logo sizing for print */
+  .receipt-content .text-center img {
+    max-width: 150px !important;
+    height: auto !important;
+    margin-bottom: 4px !important;
+  }
+
+  /* Signature line */
+  .text-center.w-64 {
+    width: 100% !important;
+  }
+}
