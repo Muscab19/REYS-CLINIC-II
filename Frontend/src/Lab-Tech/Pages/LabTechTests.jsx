@@ -8,7 +8,8 @@ import {
   Calendar, Activity, TrendingUp, TrendingDown, Users,
   Home, Settings, Bell, Edit, Trash2, BarChart3, Shield,
   Stethoscope, Syringe, Droplet, Brain, Bone,
-  FlaskConical, Scissors, Thermometer, HeartPulse
+  FlaskConical, Scissors, Thermometer, HeartPulse,
+  Save
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -27,6 +28,7 @@ const LabTechTests = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterPriority, setFilterPriority] = useState('all');
   const [selectedTest, setSelectedTest] = useState(null);
+  const [testDefinition, setTestDefinition] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showProcessModal, setShowProcessModal] = useState(false);
   const [testResults, setTestResults] = useState({});
@@ -92,6 +94,24 @@ const LabTechTests = () => {
     });
   };
 
+  const fetchTestDefinition = async (testName) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/lab-tests/by-name/${encodeURIComponent(testName)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (data.success) {
+        setTestDefinition(data.data);
+        return data.data;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error fetching test definition:', error);
+      return null;
+    }
+  };
+
   const handleStartProcessing = async (test) => {
     try {
       const token = localStorage.getItem('token');
@@ -118,30 +138,77 @@ const LabTechTests = () => {
     }
   };
 
-  const handleProcessTest = (test) => {
+  const handleProcessTest = async (test) => {
     setSelectedTest(test);
-    // Initialize result fields for the test
-    const initialResults = {};
-    if (test.parameters && test.parameters.length > 0) {
-      test.parameters.forEach(param => {
-        initialResults[param] = '';
-      });
-    }
-    setTestResults(initialResults);
+    setTestResults({});
     setAdditionalComments('');
+    
+    // Fetch test definition to get parameters and result types
+    const definition = await fetchTestDefinition(test.testName);
+    
+    if (definition) {
+      // Initialize results based on test definition
+      const initialResults = {};
+      
+      if (definition.resultType === 'multi' && definition.parameters) {
+        definition.parameters.forEach(param => {
+          initialResults[param.name] = '';
+        });
+      } else if (definition.resultType === 'quantitative') {
+        initialResults['value'] = '';
+      } else if (definition.resultType === 'qualitative') {
+        initialResults['result'] = '';
+      } else if (definition.resultType === 'semi-quantitative') {
+        initialResults['result'] = '';
+      } else if (definition.resultType === 'categorical') {
+        initialResults['result'] = '';
+      } else if (test.parameters && test.parameters.length > 0) {
+        test.parameters.forEach(param => {
+          initialResults[param] = '';
+        });
+      }
+      
+      setTestResults(initialResults);
+    } else {
+      // Fallback to parameters from request
+      const initialResults = {};
+      if (test.parameters && test.parameters.length > 0) {
+        test.parameters.forEach(param => {
+          initialResults[param] = '';
+        });
+      }
+      setTestResults(initialResults);
+    }
+    
     setShowProcessModal(true);
+  };
+
+  const handleResultChange = (paramName, value) => {
+    setTestResults(prev => ({
+      ...prev,
+      [paramName]: value
+    }));
   };
 
   const handleSubmitResults = async () => {
     if (!selectedTest) return;
     
     // Validate that all required parameters have results
-    if (selectedTest.parameters && selectedTest.parameters.length > 0) {
-      const missingParams = selectedTest.parameters.filter(param => !testResults[param]);
-      if (missingParams.length > 0) {
-        toast.error(`Please enter results for: ${missingParams.join(', ')}`);
-        return;
-      }
+    let missingParams = [];
+    
+    if (testDefinition?.resultType === 'multi' && testDefinition.parameters) {
+      missingParams = testDefinition.parameters.filter(param => !testResults[param.name]);
+    } else if (testDefinition?.resultType === 'quantitative') {
+      if (!testResults.value && testResults.value !== 0) missingParams = ['value'];
+    } else if (testDefinition?.resultType === 'qualitative' || testDefinition?.resultType === 'semi-quantitative' || testDefinition?.resultType === 'categorical') {
+      if (!testResults.result) missingParams = ['result'];
+    } else if (selectedTest.parameters && selectedTest.parameters.length > 0) {
+      missingParams = selectedTest.parameters.filter(param => !testResults[param]);
+    }
+    
+    if (missingParams.length > 0) {
+      toast.error(`Please enter results for: ${missingParams.join(', ')}`);
+      return;
     }
     
     try {
@@ -167,6 +234,7 @@ const LabTechTests = () => {
         fetchTestRequests();
         setShowProcessModal(false);
         setSelectedTest(null);
+        setTestDefinition(null);
         setTestResults({});
         setAdditionalComments('');
       } else {
@@ -178,8 +246,9 @@ const LabTechTests = () => {
     }
   };
 
-  const handleViewDetails = (test) => {
+  const handleViewDetails = async (test) => {
     setSelectedTest(test);
+    await fetchTestDefinition(test.testName);
     setShowDetailsModal(true);
   };
 
@@ -221,6 +290,119 @@ const LabTechTests = () => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const renderResultInput = (paramName, paramConfig = null) => {
+    let resultType = 'text';
+    let options = {};
+    
+    if (testDefinition) {
+      if (testDefinition.resultType === 'multi' && paramConfig) {
+        resultType = paramConfig.resultType;
+        options = paramConfig;
+      } else {
+        resultType = testDefinition.resultType;
+        options = testDefinition;
+      }
+    }
+    
+    const value = testResults[paramName] || '';
+    
+    switch(resultType) {
+      case 'quantitative':
+        return (
+          <div>
+            <input
+              type="number"
+              step="any"
+              value={value}
+              onChange={(e) => handleResultChange(paramName, e.target.value)}
+              placeholder={`Enter ${paramName} value`}
+              className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:outline-none"
+            />
+            {options.unit && (
+              <p className="text-xs text-gray-500 mt-1">Unit: {options.unit}</p>
+            )}
+            {(options.normalRangeMin !== undefined || options.normalRangeMax !== undefined) && (
+              <p className="text-xs text-blue-600 mt-1">
+                Normal Range: {options.normalRangeMin || '?'} - {options.normalRangeMax || '?'} {options.unit || ''}
+              </p>
+            )}
+          </div>
+        );
+        
+      case 'qualitative':
+        const qualOptions = options.qualitativeOptions || ['Positive', 'Negative'];
+        return (
+          <div className="flex flex-wrap gap-3">
+            {qualOptions.map(opt => (
+              <label key={opt} className="flex items-center space-x-2 p-2 border rounded-lg cursor-pointer hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name={paramName}
+                  value={opt}
+                  checked={value === opt}
+                  onChange={(e) => handleResultChange(paramName, e.target.value)}
+                  className="text-[#D01A2B] focus:ring-[#D01A2B]"
+                />
+                <span className="text-sm">{opt}</span>
+              </label>
+            ))}
+          </div>
+        );
+        
+      case 'semi-quantitative':
+        const semiOptions = options.semiQuantitativeOptions || ['Negative', 'Trace', '1+', '2+', '3+', '4+'];
+        return (
+          <div className="flex flex-wrap gap-3">
+            {semiOptions.map(opt => (
+              <label key={opt} className="flex items-center space-x-2 p-2 border rounded-lg cursor-pointer hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name={paramName}
+                  value={opt}
+                  checked={value === opt}
+                  onChange={(e) => handleResultChange(paramName, e.target.value)}
+                  className="text-[#D01A2B] focus:ring-[#D01A2B]"
+                />
+                <span className="text-sm">{opt}</span>
+              </label>
+            ))}
+          </div>
+        );
+        
+      case 'categorical':
+        const catOptions = options.categoricalOptions || ['Normal', 'Abnormal'];
+        return (
+          <div className="flex flex-wrap gap-3">
+            {catOptions.map(opt => (
+              <label key={opt} className="flex items-center space-x-2 p-2 border rounded-lg cursor-pointer hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name={paramName}
+                  value={opt}
+                  checked={value === opt}
+                  onChange={(e) => handleResultChange(paramName, e.target.value)}
+                  className="text-[#D01A2B] focus:ring-[#D01A2B]"
+                />
+                <span className="text-sm">{opt}</span>
+              </label>
+            ))}
+          </div>
+        );
+        
+      case 'text':
+      default:
+        return (
+          <textarea
+            rows="2"
+            value={value}
+            onChange={(e) => handleResultChange(paramName, e.target.value)}
+            placeholder={`Enter ${paramName} results...`}
+            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:outline-none"
+          />
+        );
+    }
   };
 
   const filteredTests = testRequests.filter(test => {
@@ -268,6 +450,17 @@ const LabTechTests = () => {
       return <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-semibold flex items-center space-x-1"><AlertCircle className="w-3 h-3" /><span>Urgent</span></span>;
     }
     return null;
+  };
+
+  const getResultTypeBadge = (type) => {
+    const colors = {
+      quantitative: 'bg-purple-100 text-purple-700',
+      qualitative: 'bg-green-100 text-green-700',
+      'semi-quantitative': 'bg-orange-100 text-orange-700',
+      categorical: 'bg-cyan-100 text-cyan-700',
+      multi: 'bg-indigo-100 text-indigo-700'
+    };
+    return <span className={`px-2 py-1 rounded-full text-xs font-semibold ${colors[type] || 'bg-gray-100'}`}>{type || 'N/A'}</span>;
   };
 
   if (!isAuthenticated || user?.role !== 'lab-tech') {
@@ -414,6 +607,7 @@ const LabTechTests = () => {
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Request ID</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Test Name</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Type</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Patient</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Requested By</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Date</th>
@@ -434,6 +628,9 @@ const LabTechTests = () => {
                           <div>
                             <p className="font-semibold text-gray-900">{test.testName}</p>
                           </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          {getResultTypeBadge(test.resultType)}
                         </td>
                         <td className="px-6 py-4">
                           <div>
@@ -522,31 +719,6 @@ const LabTechTests = () => {
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
-                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                      let pageNum;
-                      if (totalPages <= 5) {
-                        pageNum = i + 1;
-                      } else if (currentPage <= 3) {
-                        pageNum = i + 1;
-                      } else if (currentPage >= totalPages - 2) {
-                        pageNum = totalPages - 4 + i;
-                      } else {
-                        pageNum = currentPage - 2 + i;
-                      }
-                      return (
-                        <button
-                          key={pageNum}
-                          onClick={() => goToPage(pageNum)}
-                          className={`px-3 py-1 rounded-lg transition-colors ${
-                            currentPage === pageNum
-                              ? 'bg-[#D01A2B] text-white'
-                              : 'hover:bg-gray-100'
-                          }`}
-                        >
-                          {pageNum}
-                        </button>
-                      );
-                    })}
                     <button
                       onClick={() => goToPage(currentPage + 1)}
                       disabled={currentPage === totalPages}
@@ -562,231 +734,128 @@ const LabTechTests = () => {
         </div>
       </div>
 
-      {/* Test Details Modal */}
-      {showDetailsModal && selectedTest && (
+      {/* Process Test Modal - Smart Dynamic Results */}
+      {showProcessModal && selectedTest && testDefinition && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900">Test Request Details</h3>
-              <button onClick={() => setShowDetailsModal(false)} className="p-1 hover:bg-gray-100 rounded-full">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            <div className="p-6">
-              {/* Header */}
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 mb-6">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-sm text-gray-500">Request ID</p>
-                    <p className="text-2xl font-mono font-bold text-[#D01A2B]">{selectedTest.requestId}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm text-gray-500">Request Date</p>
-                    <p className="font-semibold">{formatDate(selectedTest.requestDate)}</p>
-                  </div>
-                </div>
-                {selectedTest.priority === 'urgent' && (
-                  <div className="mt-3 inline-flex items-center space-x-1 bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs">
-                    <AlertCircle className="w-3 h-3" />
-                    <span>Urgent Request</span>
-                  </div>
-                )}
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">Enter Test Results</h3>
+                <p className="text-sm text-gray-500 mt-1">{selectedTest.testName}</p>
               </div>
-
-              {/* Test Information */}
-              <div className="mb-6">
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
-                  <TestTube className="w-4 h-4 text-[#D01A2B]" />
-                  <span>Test Information</span>
-                </h4>
-                <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-xl p-4">
-                  <div><p className="text-sm text-gray-500">Test Name</p><p className="font-semibold">{selectedTest.testName}</p></div>
-                  <div><p className="text-sm text-gray-500">Parameters</p><p>{selectedTest.parameters?.length || 0} parameters</p></div>
-                </div>
-              </div>
-
-              {/* Patient Information */}
-              <div className="mb-6">
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
-                  <User className="w-4 h-4 text-[#D01A2B]" />
-                  <span>Patient Information</span>
-                </h4>
-                <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-xl p-4">
-                  <div><p className="text-sm text-gray-500">Patient Name</p><p className="font-semibold">{selectedTest.patientName}</p></div>
-                  <div><p className="text-sm text-gray-500">Age</p><p>{selectedTest.patientAge} years</p></div>
-                  <div><p className="text-sm text-gray-500">Parent/Guardian</p><p>{selectedTest.parentName}</p></div>
-                  <div><p className="text-sm text-gray-500">Phone</p><p>{selectedTest.parentPhone}</p></div>
-                </div>
-              </div>
-
-              {/* Requesting Doctor */}
-              <div className="mb-6">
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
-                  <Stethoscope className="w-4 h-4 text-[#D01A2B]" />
-                  <span>Requesting Doctor</span>
-                </h4>
-                <div className="bg-gray-50 rounded-xl p-4">
-                  <p className="font-semibold">{selectedTest.requestedBy}</p>
-                </div>
-              </div>
-
-              {/* Clinical Information */}
-              {selectedTest.clinicalInfo && (
-                <div className="mb-6">
-                  <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
-                    <ClipboardList className="w-4 h-4 text-[#D01A2B]" />
-                    <span>Clinical Information</span>
-                  </h4>
-                  <div className="bg-yellow-50 rounded-xl p-4">
-                    <p className="text-gray-700">{selectedTest.clinicalInfo}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Doctor's Notes */}
-              {selectedTest.notes && (
-                <div className="mb-6">
-                  <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
-                    <FileText className="w-4 h-4 text-[#D01A2B]" />
-                    <span>Doctor's Notes</span>
-                  </h4>
-                  <div className="bg-gray-50 rounded-xl p-4">
-                    <p className="text-gray-700">{selectedTest.notes}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Test Results (if completed) */}
-              {selectedTest.status === 'completed' && selectedTest.results && (
-                <div className="mb-6">
-                  <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
-                    <FileCheck className="w-4 h-4 text-green-600" />
-                    <span>Test Results</span>
-                  </h4>
-                  <div className="bg-green-50 rounded-xl overflow-hidden">
-                    <table className="w-full">
-                      <thead className="bg-green-100">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-sm font-semibold">Parameter</th>
-                          <th className="px-4 py-2 text-left text-sm font-semibold">Result</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Object.entries(selectedTest.results).map(([param, value]) => (
-                          <tr key={param} className="border-t border-green-200">
-                            <td className="px-4 py-2 text-sm font-medium">{param}</td>
-                            <td className="px-4 py-2 text-sm">{value}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="mt-3 text-sm text-gray-500">
-                    <p>Performed By: {selectedTest.performedBy}</p>
-                    <p>Completed At: {formatDate(selectedTest.completedAt)}</p>
-                    {selectedTest.additionalComments && <p>Comments: {selectedTest.additionalComments}</p>}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex space-x-3">
-                {selectedTest.status === 'pending' && (
-                  <>
-                    <button
-                      onClick={() => {
-                        setShowDetailsModal(false);
-                        handleStartProcessing(selectedTest);
-                      }}
-                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700"
-                    >
-                      Start Processing
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowDetailsModal(false);
-                        handleProcessTest(selectedTest);
-                      }}
-                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700"
-                    >
-                      Submit Results
-                    </button>
-                  </>
-                )}
-                {selectedTest.status === 'in-progress' && (
-                  <button
-                    onClick={() => {
-                      setShowDetailsModal(false);
-                      handleProcessTest(selectedTest);
-                    }}
-                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700"
-                  >
-                    Submit Results
-                  </button>
-                )}
-                <button
-                  onClick={() => setShowDetailsModal(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Process Test Modal - Enter Results */}
-      {showProcessModal && selectedTest && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900">Enter Test Results</h3>
               <button onClick={() => setShowProcessModal(false)} className="p-1 hover:bg-gray-100 rounded-full">
                 <X className="w-6 h-6" />
               </button>
             </div>
             <div className="p-6">
-              <div className="mb-6">
-                <div className="bg-blue-50 rounded-xl p-4 mb-4">
-                  <p><span className="font-semibold">Patient:</span> {selectedTest.patientName}</p>
-                  <p><span className="font-semibold">Test:</span> {selectedTest.testName}</p>
-                  <p><span className="font-semibold">Request ID:</span> {selectedTest.requestId}</p>
-                </div>
-
-                <h4 className="font-semibold text-gray-900 mb-4">Test Parameters</h4>
-                <div className="space-y-4">
-                  {(selectedTest.parameters || []).map((param) => (
-                    <div key={param} className="border rounded-lg p-4">
-                      <label className="block font-semibold text-gray-900 mb-2">{param}</label>
-                      <input
-                        type="text"
-                        value={testResults[param] || ''}
-                        onChange={(e) => setTestResults({ ...testResults, [param]: e.target.value })}
-                        placeholder={`Enter ${param} value`}
-                        className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:outline-none"
-                      />
-                      {selectedTest.normalRanges && selectedTest.normalRanges[param] && (
-                        <p className="text-xs text-gray-500 mt-1">
-                          Normal Range: {selectedTest.normalRanges[param]}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-6">
-                  <label className="block font-semibold text-gray-900 mb-2">Additional Comments</label>
-                  <textarea
-                    rows="3"
-                    value={additionalComments}
-                    onChange={(e) => setAdditionalComments(e.target.value)}
-                    placeholder="Any additional notes about the test results..."
-                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:outline-none"
-                  />
+              {/* Patient Info Card */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 mb-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500">Patient Name</p>
+                    <p className="font-semibold">{selectedTest.patientName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Age</p>
+                    <p className="font-semibold">{selectedTest.patientAge} years</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Parent/Guardian</p>
+                    <p className="font-semibold">{selectedTest.parentName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Request ID</p>
+                    <p className="font-mono font-semibold text-[#D01A2B]">{selectedTest.requestId}</p>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex space-x-3">
+              {/* Result Type Info Badge */}
+              <div className="mb-4 flex items-center space-x-2">
+                <span className="text-sm text-gray-500">Result Type:</span>
+                {getResultTypeBadge(testDefinition.resultType)}
+                {testDefinition.resultType === 'quantitative' && testDefinition.unit && (
+                  <span className="text-xs text-gray-500">Unit: {testDefinition.unit}</span>
+                )}
+              </div>
+
+              <h4 className="font-semibold text-gray-900 mb-4 flex items-center space-x-2">
+                <ClipboardList className="w-4 h-4 text-[#D01A2B]" />
+                <span>Test Parameters & Results</span>
+              </h4>
+
+              <div className="space-y-6">
+                {testDefinition.resultType === 'multi' && testDefinition.parameters ? (
+                  // Multi-parameter test (e.g., Stool Examination)
+                  testDefinition.parameters.map((param, idx) => (
+                    <div key={idx} className="border rounded-lg p-4 bg-gray-50">
+                      <label className="block font-semibold text-gray-900 mb-3">
+                        {param.name}
+                        {param.resultType === 'quantitative' && param.unit && (
+                          <span className="text-xs text-gray-500 ml-2">({param.unit})</span>
+                        )}
+                      </label>
+                      {renderResultInput(param.name, param)}
+                      {param.resultType === 'quantitative' && (param.normalRangeMin !== undefined || param.normalRangeMax !== undefined) && (
+                        <p className="text-xs text-blue-600 mt-2">
+                          Reference Range: {param.normalRangeMin || '?'} - {param.normalRangeMax || '?'} {param.unit || ''}
+                        </p>
+                      )}
+                    </div>
+                  ))
+                ) : testDefinition.resultType === 'quantitative' ? (
+                  // Single quantitative test (e.g., Blood Sugar)
+                  <div className="border rounded-lg p-4 bg-gray-50">
+                    <label className="block font-semibold text-gray-900 mb-3">
+                      Result Value {testDefinition.unit && <span className="text-sm text-gray-500">({testDefinition.unit})</span>}
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={testResults.value || ''}
+                      onChange={(e) => handleResultChange('value', e.target.value)}
+                      placeholder={`Enter ${testDefinition.name} value`}
+                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:outline-none"
+                    />
+                    {(testDefinition.normalRangeMin !== undefined || testDefinition.normalRangeMax !== undefined) && (
+                      <p className="text-xs text-blue-600 mt-2">
+                        Normal Range: {testDefinition.normalRangeMin || '?'} - {testDefinition.normalRangeMax || '?'} {testDefinition.unit || ''}
+                      </p>
+                    )}
+                  </div>
+                ) : (testDefinition.resultType === 'qualitative' || testDefinition.resultType === 'semi-quantitative' || testDefinition.resultType === 'categorical') ? (
+                  // Qualitative/Semi-quantitative/Categorical test (e.g., Malaria, HIV, Blood Group)
+                  <div className="border rounded-lg p-4 bg-gray-50">
+                    <label className="block font-semibold text-gray-900 mb-3">Result</label>
+                    {renderResultInput('result', testDefinition)}
+                  </div>
+                ) : (
+                  // Fallback for text type
+                  <div className="border rounded-lg p-4 bg-gray-50">
+                    <label className="block font-semibold text-gray-900 mb-3">Result</label>
+                    <textarea
+                      rows="4"
+                      value={testResults.result || ''}
+                      onChange={(e) => handleResultChange('result', e.target.value)}
+                      placeholder="Enter test results..."
+                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6">
+                <label className="block font-semibold text-gray-900 mb-2">Additional Comments / Notes</label>
+                <textarea
+                  rows="3"
+                  value={additionalComments}
+                  onChange={(e) => setAdditionalComments(e.target.value)}
+                  placeholder="Any additional notes about the test results..."
+                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:outline-none"
+                />
+              </div>
+
+              <div className="flex space-x-3 mt-6 pt-4 border-t">
                 <button
                   onClick={() => setShowProcessModal(false)}
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50"
@@ -795,8 +864,9 @@ const LabTechTests = () => {
                 </button>
                 <button
                   onClick={handleSubmitResults}
-                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700"
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 flex items-center justify-center gap-2"
                 >
+                  <Save className="w-4 h-4" />
                   Submit Results
                 </button>
               </div>

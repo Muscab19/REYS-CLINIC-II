@@ -11,7 +11,6 @@ router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'receptio
     const { search, category, isActive } = req.query;
     let query = {};
     
-    // For reception, only show active tests
     if (req.user.role === 'reception') {
       query.isActive = true;
     }
@@ -19,8 +18,7 @@ router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'receptio
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
-        { code: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+        { code: { $regex: search, $options: 'i' } }
       ];
     }
     
@@ -31,7 +29,6 @@ router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'receptio
     if (isActive === 'true') {
       query.isActive = true;
     } else if (isActive === 'false' && req.user.role !== 'reception') {
-      // Only non-reception can see inactive tests
       query.isActive = false;
     }
     
@@ -48,98 +45,80 @@ router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'receptio
   }
 });
 
-// @route   POST /api/lab-tests/bulk
-// @desc    Create multiple lab tests at once
-// @access  Private (lab-tech)
-router.post('/bulk', protect, authorize('lab-tech'), async (req, res) => {
-  try {
-    const { tests } = req.body;
-    
-    if (!tests || !Array.isArray(tests) || tests.length === 0) {
-      return res.status(400).json({
-        success: false,
-        msg: 'Please provide an array of tests'
-      });
-    }
-    
-    const results = {
-      successful: [],
-      failed: []
-    };
-    
-    for (const test of tests) {
-      if (!test.name || !test.category || !test.normalRange || !test.price) {
-        results.failed.push({ 
-          name: test.name || 'Unknown', 
-          reason: 'Missing required fields (name, category, normalRange, price)' 
-        });
-        continue;
-      }
-      
-      try {
-        // Check if test already exists
-        const existing = await LabTest.findOne({ 
-          name: { $regex: new RegExp(`^${test.name.trim()}$`, 'i') } 
-        });
-        
-        if (existing) {
-          results.failed.push({ name: test.name, reason: 'Test already exists' });
-          continue;
-        }
-        
-        // Generate a unique code if not provided
-        let uniqueCode = test.code;
-        if (!uniqueCode) {
-          const prefix = test.category.substring(0, 3).toUpperCase();
-          const count = await LabTest.countDocuments({ category: test.category });
-          uniqueCode = `${prefix}${String(count + 1).padStart(3, '0')}`;
-        }
-        
-        const newTest = new LabTest({
-          name: test.name.trim(),
-          code: uniqueCode,
-          category: test.category,
-          normalRange: test.normalRange,
-          price: parseFloat(test.price),
-          unit: test.unit || '',
-          description: test.description || '',
-          preparation: test.preparation || '',
-          turnaroundTime: test.turnaroundTime || '24 hours',
-          createdBy: req.user.id,
-          createdByName: req.user.name
-        });
-        
-        await newTest.save();
-        results.successful.push(newTest);
-      } catch (error) {
-        results.failed.push({ name: test.name, reason: error.message });
-      }
-    }
-    
-    res.status(201).json({
-      success: true,
-      msg: `${results.successful.length} created, ${results.failed.length} failed`,
-      data: results
-    });
-  } catch (error) {
-    console.error('Bulk create error:', error);
-    res.status(500).json({ success: false, msg: 'Server error' });
-  }
-});
-
 // @route   POST /api/lab-tests
-// @desc    Create a single lab test
+// @desc    Create a single lab test (supports single and multi-parameter tests)
 // @access  Private (lab-tech)
 router.post('/', protect, authorize('lab-tech'), async (req, res) => {
   try {
-    const { name, category, normalRange, price, code, description, unit, preparation, turnaroundTime } = req.body;
+    const { 
+      name, 
+      category, 
+      resultType,
+      normalRangeMin,
+      normalRangeMax,
+      normalRange,
+      unit, 
+      price, 
+      turnaroundTime,
+      qualitativeOptions,
+      semiQuantitativeOptions,
+      categoricalOptions,
+      parameters  // NEW: for multi-parameter tests
+    } = req.body;
     
     // Validate required fields
-    if (!name || !category || !normalRange || !price) {
+    if (!name || !category || !price) {
       return res.status(400).json({ 
         success: false, 
-        msg: 'Missing required fields: name, category, normalRange, price' 
+        msg: 'Missing required fields: name, category, price' 
       });
+    }
+    
+    // For multi-parameter tests, validate parameters
+    if (resultType === 'multi') {
+      if (!parameters || parameters.length === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          msg: 'Multi-parameter tests require at least one parameter' 
+        });
+      }
+      
+      // Validate each parameter
+      for (const param of parameters) {
+        if (!param.name) {
+          return res.status(400).json({ 
+            success: false, 
+            msg: 'All parameters must have a name' 
+          });
+        }
+        
+        if (param.resultType === 'quantitative') {
+          if (!param.normalRangeMin || !param.normalRangeMax) {
+            return res.status(400).json({ 
+              success: false, 
+              msg: `Parameter "${param.name}" requires min and max range values` 
+            });
+          }
+        }
+        
+        if (param.resultType === 'qualitative') {
+          if (!param.qualitativeOptions || param.qualitativeOptions.length === 0) {
+            return res.status(400).json({ 
+              success: false, 
+              msg: `Parameter "${param.name}" requires at least one qualitative option` 
+            });
+          }
+        }
+        
+        if (param.resultType === 'semi-quantitative') {
+          if (!param.semiQuantitativeOptions || param.semiQuantitativeOptions.length === 0) {
+            return res.status(400).json({ 
+              success: false, 
+              msg: `Parameter "${param.name}" requires at least one semi-quantitative option` 
+            });
+          }
+        }
+      }
     }
     
     // Check if test with same name exists
@@ -154,39 +133,62 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       });
     }
     
-    // Check if code exists (if provided)
-    if (code) {
-      const existingCode = await LabTest.findOne({ code: code.toUpperCase() });
-      if (existingCode) {
-        return res.status(400).json({ 
-          success: false, 
-          msg: `Code "${code}" already exists. Please use a different code.` 
-        });
-      }
-    }
+    // Generate a unique code
+    const prefix = category.substring(0, 3).toUpperCase();
+    const count = await LabTest.countDocuments({ category });
+    const uniqueCode = `${prefix}${String(count + 1).padStart(3, '0')}`;
     
-    // Generate a unique code if not provided
-    let uniqueCode = code;
-    if (!uniqueCode) {
-      const prefix = category.substring(0, 3).toUpperCase();
-      const count = await LabTest.countDocuments({ category });
-      uniqueCode = `${prefix}${String(count + 1).padStart(3, '0')}`;
-    }
-    
-    const test = new LabTest({
+    // Build the test data based on result type
+    const testData = {
       name: name.trim(),
       code: uniqueCode.toUpperCase(),
       category,
-      normalRange,
+      resultType: resultType || 'quantitative',
       price: parseFloat(price),
-      description: description || '',
       unit: unit || '',
-      preparation: preparation || '',
       turnaroundTime: turnaroundTime || '24 hours',
       createdBy: req.user.id,
-      createdByName: req.user.name
-    });
+      createdByName: req.user.name,
+      isActive: true
+    };
     
+    // Add type-specific fields and generate normalRange display string
+    if (resultType === 'quantitative') {
+      testData.normalRangeMin = normalRangeMin ? parseFloat(normalRangeMin) : null;
+      testData.normalRangeMax = normalRangeMax ? parseFloat(normalRangeMax) : null;
+      testData.normalRange = `${normalRangeMin || ''} - ${normalRangeMax || ''} ${unit || ''}`.trim();
+    } 
+    else if (resultType === 'qualitative') {
+      testData.qualitativeOptions = qualitativeOptions || [];
+      testData.normalRange = (qualitativeOptions || []).join(', ');
+    } 
+    else if (resultType === 'semi-quantitative') {
+      testData.semiQuantitativeOptions = semiQuantitativeOptions || [];
+      testData.normalRange = (semiQuantitativeOptions || []).join(', ');
+    } 
+    else if (resultType === 'categorical') {
+      testData.categoricalOptions = categoricalOptions || [];
+      testData.normalRange = (categoricalOptions || []).join(', ');
+    }
+    else if (resultType === 'multi') {
+      // Process and format parameters
+      testData.parameters = parameters.map(param => ({
+        name: param.name,
+        resultType: param.resultType,
+        normalRangeMin: param.normalRangeMin ? parseFloat(param.normalRangeMin) : null,
+        normalRangeMax: param.normalRangeMax ? parseFloat(param.normalRangeMax) : null,
+        unit: param.unit || '',
+        qualitativeOptions: param.qualitativeOptions || [],
+        semiQuantitativeOptions: param.semiQuantitativeOptions || [],
+        categoricalOptions: param.categoricalOptions || []
+      }));
+      testData.normalRange = `${parameters.length} parameter(s)`;
+    }
+    else {
+      testData.normalRange = normalRange || '';
+    }
+    
+    const test = new LabTest(testData);
     await test.save();
     
     res.status(201).json({
@@ -197,7 +199,6 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
   } catch (error) {
     console.error('Create lab test error:', error);
     
-    // Handle duplicate key error
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
@@ -215,10 +216,25 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
 // @access  Private (lab-tech)
 router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
   try {
-    const { name, category, normalRange, price, code, description, unit, preparation, turnaroundTime, isActive } = req.body;
-    const testId = req.params.id;
+    const { 
+      name, 
+      category, 
+      resultType,
+      normalRangeMin,
+      normalRangeMax,
+      unit, 
+      price, 
+      turnaroundTime,
+      qualitativeOptions,
+      semiQuantitativeOptions,
+      categoricalOptions,
+      parameters,  // NEW: for multi-parameter tests
+      isActive 
+    } = req.body;
     
+    const testId = req.params.id;
     const test = await LabTest.findById(testId);
+    
     if (!test) {
       return res.status(404).json({ success: false, msg: 'Test not found' });
     }
@@ -235,26 +251,44 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
       test.name = name.trim();
     }
     
-    // Check for duplicate code (excluding current)
-    if (code && code !== test.code) {
-      const existing = await LabTest.findOne({ 
-        code: code.toUpperCase(),
-        _id: { $ne: testId }
-      });
-      if (existing) {
-        return res.status(400).json({ success: false, msg: 'Code already exists' });
-      }
-      test.code = code.toUpperCase();
-    }
-    
     if (category) test.category = category;
-    if (normalRange) test.normalRange = normalRange;
+    if (resultType) test.resultType = resultType;
     if (price) test.price = parseFloat(price);
-    if (description !== undefined) test.description = description;
     if (unit !== undefined) test.unit = unit;
-    if (preparation !== undefined) test.preparation = preparation;
     if (turnaroundTime !== undefined) test.turnaroundTime = turnaroundTime;
     if (isActive !== undefined) test.isActive = isActive;
+    
+    // Update type-specific fields and normalRange
+    if (resultType === 'quantitative') {
+      test.normalRangeMin = normalRangeMin ? parseFloat(normalRangeMin) : null;
+      test.normalRangeMax = normalRangeMax ? parseFloat(normalRangeMax) : null;
+      test.normalRange = `${normalRangeMin || ''} - ${normalRangeMax || ''} ${unit || ''}`.trim();
+    } 
+    else if (resultType === 'qualitative') {
+      test.qualitativeOptions = qualitativeOptions || [];
+      test.normalRange = (qualitativeOptions || []).join(', ');
+    } 
+    else if (resultType === 'semi-quantitative') {
+      test.semiQuantitativeOptions = semiQuantitativeOptions || [];
+      test.normalRange = (semiQuantitativeOptions || []).join(', ');
+    } 
+    else if (resultType === 'categorical') {
+      test.categoricalOptions = categoricalOptions || [];
+      test.normalRange = (categoricalOptions || []).join(', ');
+    }
+    else if (resultType === 'multi') {
+      test.parameters = parameters.map(param => ({
+        name: param.name,
+        resultType: param.resultType,
+        normalRangeMin: param.normalRangeMin ? parseFloat(param.normalRangeMin) : null,
+        normalRangeMax: param.normalRangeMax ? parseFloat(param.normalRangeMax) : null,
+        unit: param.unit || '',
+        qualitativeOptions: param.qualitativeOptions || [],
+        semiQuantitativeOptions: param.semiQuantitativeOptions || [],
+        categoricalOptions: param.categoricalOptions || []
+      }));
+      test.normalRange = `${parameters.length} parameter(s)`;
+    }
     
     await test.save();
     
@@ -301,7 +335,6 @@ router.get('/:id', protect, authorize('lab-tech', 'doctor', 'superadmin', 'recep
       return res.status(404).json({ success: false, msg: 'Test not found' });
     }
     
-    // Reception can only see active tests
     if (req.user.role === 'reception' && !test.isActive) {
       return res.status(403).json({ success: false, msg: 'Not authorized to view this test' });
     }
@@ -313,7 +346,6 @@ router.get('/:id', protect, authorize('lab-tech', 'doctor', 'superadmin', 'recep
   }
 });
 
-// Add this new endpoint to routes/labTests.js - Exact match by name
 // @route   GET /api/lab-tests/by-name/:name
 // @desc    Get lab test by exact name
 // @access  Private
@@ -321,7 +353,6 @@ router.get('/by-name/:name', protect, authorize('lab-tech', 'doctor', 'superadmi
   try {
     const testName = decodeURIComponent(req.params.name);
     
-    // Exact match search - case insensitive but exact string
     const test = await LabTest.findOne({ 
       name: { $regex: new RegExp(`^${testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
     });
@@ -333,7 +364,6 @@ router.get('/by-name/:name', protect, authorize('lab-tech', 'doctor', 'superadmi
       });
     }
     
-    // Reception can only see active tests
     if (req.user.role === 'reception' && !test.isActive) {
       return res.status(403).json({ success: false, msg: 'Not authorized to view this test' });
     }
@@ -346,3 +376,5 @@ router.get('/by-name/:name', protect, authorize('lab-tech', 'doctor', 'superadmi
 });
 
 module.exports = router;
+
+// if (!name || !category || !price) {

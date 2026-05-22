@@ -270,9 +270,30 @@ router.put('/:id/results', protect, authorize('lab-tech'), async (req, res) => {
       });
     }
     
-    // Validate all parameters have results
-    if (labRequest.parameters && labRequest.parameters.length > 0) {
-      const missingParams = labRequest.parameters.filter(param => !results[param]);
+    // Fetch test definition to get parameter names
+    const LabTest = require('../models/LabTest');
+    const testDefinition = await LabTest.findOne({ 
+      name: { $regex: new RegExp(`^${labRequest.testName}$`, 'i') }
+    });
+    
+    // Build expected parameter names based on test type
+    let expectedParams = [];
+    
+    if (testDefinition && testDefinition.resultType === 'multi' && testDefinition.parameters) {
+      // For multi-parameter tests, use parameter names from definition
+      expectedParams = testDefinition.parameters.map(p => p.name);
+    } else if (labRequest.parameters && labRequest.parameters.length > 0) {
+      // Fallback to stored parameters
+      expectedParams = labRequest.parameters;
+    }
+    
+    // Validate all expected parameters have results
+    if (expectedParams.length > 0) {
+      const missingParams = expectedParams.filter(param => {
+        // Check if result exists for this parameter
+        return !results[param] && results[param] !== 0 && results[param] !== false;
+      });
+      
       if (missingParams.length > 0) {
         return res.status(400).json({
           success: false,
@@ -281,6 +302,7 @@ router.put('/:id/results', protect, authorize('lab-tech'), async (req, res) => {
       }
     }
     
+    // Store results as-is (they already use proper parameter names)
     labRequest.results = results;
     labRequest.additionalComments = additionalComments || '';
     labRequest.performedBy = performedBy || req.user.name;
@@ -383,6 +405,47 @@ router.get('/stats/summary', protect, async (req, res) => {
   }
 });
 
+// @route   GET /api/lab-requests/:id/with-test-details
+// @desc    Get lab request with full test details including parameters and result types
+// @access  Private (Lab Tech)
+router.get('/:id/with-test-details', protect, authorize('lab-tech'), async (req, res) => {
+  try {
+    const labRequest = await LabRequest.findById(req.params.id)
+      .populate('patientId', 'childName childAge parentName parentPhone')
+      .populate('requestedById', 'name email');
+    
+    if (!labRequest) {
+      return res.status(404).json({
+        success: false,
+        msg: 'Lab request not found'
+      });
+    }
+    
+    // Fetch the test definition from LabTest collection
+    const LabTest = require('../models/LabTest');
+    const testDefinition = await LabTest.findOne({ 
+      name: { $regex: new RegExp(`^${labRequest.testName}$`, 'i') }
+    });
+    
+    const responseData = {
+      ...labRequest.toObject(),
+      testDefinition: testDefinition || null
+    };
+    
+    res.json({
+      success: true,
+      data: responseData
+    });
+  } catch (error) {
+    console.error('Error fetching lab request with test details:', error);
+    res.status(500).json({
+      success: false,
+      msg: 'Server error while fetching lab request details',
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
 
-// @route   GET /api/lab-requests
+// router.put('/:id/results', protect, authorize('lab-tech'), async (req, res) => {

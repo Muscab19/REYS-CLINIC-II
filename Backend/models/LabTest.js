@@ -23,9 +23,57 @@ const labTestSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  // Main result type (can be 'multi' for composite tests)
+  resultType: {
+    type: String,
+    enum: ['quantitative', 'qualitative', 'semi-quantitative', 'categorical', 'text', 'multi'],
+    default: 'quantitative'
+  },
+  // For quantitative tests (numeric with range)
+  normalRangeMin: {
+    type: Number,
+    default: null
+  },
+  normalRangeMax: {
+    type: Number,
+    default: null
+  },
+  // For qualitative tests
+  qualitativeOptions: [{
+    type: String,
+    enum: ['Positive', 'Negative', 'Reactive', 'Non-reactive', 'Detected', 'Not Detected', 'Normal', 'Abnormal', 'High', 'Low', 'Critical']
+  }],
+  // For semi-quantitative tests
+  semiQuantitativeOptions: [{
+    type: String,
+    enum: ['Negative', 'Trace', '1+', '2+', '3+', '4+', 'Small', 'Moderate', 'Large']
+  }],
+  // For categorical results
+  categoricalOptions: [{
+    type: String
+  }],
+  // MULTI-TEST PARAMETERS - For composite tests like Stool Examination
+  parameters: [{
+    name: {
+      type: String,
+      required: true
+    },
+    resultType: {
+      type: String,
+      enum: ['quantitative', 'qualitative', 'semi-quantitative', 'categorical', 'text'],
+      required: true
+    },
+    normalRangeMin: Number,
+    normalRangeMax: Number,
+    qualitativeOptions: [String],
+    semiQuantitativeOptions: [String],
+    categoricalOptions: [String],
+    unit: String
+  }],
+  // Legacy support
   normalRange: {
     type: String,
-    required: [true, 'Normal range is required']
+    default: ''
   },
   unit: {
     type: String,
@@ -59,7 +107,6 @@ const labTestSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for search
 labTestSchema.index({ name: 'text', description: 'text' });
 
-module.exports = mongoose.model('LabTest', labTestSchema); 
+module.exports = mongoose.model('LabTest', labTestSchema);
