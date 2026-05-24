@@ -244,58 +244,75 @@ const patientSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Generate unique patient ID before saving (sequential: PAT-000001, PAT-000002, etc.)
+// Generate unique patient ID ONLY if not provided by frontend
 patientSchema.pre('save', async function(next) {
-  if (!this.patientId) {
-    try {
-      const Patient = mongoose.model('Patient');
-      
-      // Find the last patient to get the highest sequential number
-      const lastPatient = await Patient.findOne({ 
-        patientId: { $regex: /^PAT-\d{6}$/ } 
-      }).sort({ patientId: -1 }).limit(1);
-      
-      let nextNumber = 1;
-      
-      if (lastPatient && lastPatient.patientId) {
-        // Extract the number from PAT-XXXXXX format
-        const match = lastPatient.patientId.match(/PAT-(\d+)/);
-        if (match && match[1]) {
-          const lastNumber = parseInt(match[1], 10);
-          if (!isNaN(lastNumber)) {
-            nextNumber = lastNumber + 1;
-          }
+  // If patientId is already provided (by frontend), use it
+  if (this.patientId) {
+    // Verify uniqueness
+    const Patient = mongoose.model('Patient');
+    const existing = await Patient.findOne({ patientId: this.patientId, _id: { $ne: this._id } });
+    if (existing) {
+      // If conflict, generate a new one
+      return this.generateSequentialId(next);
+    }
+    return next();
+  }
+  
+  // Otherwise generate sequential ID
+  this.generateSequentialId(next);
+});
+
+// Method to generate sequential patient ID
+patientSchema.methods.generateSequentialId = async function(next) {
+  try {
+    const Patient = mongoose.model('Patient');
+    
+    // Find the last patient to get the highest sequential number
+    const lastPatient = await Patient.findOne({ 
+      patientId: { $regex: /^P-\d{5,6}$/ } 
+    }).sort({ patientId: -1 }).limit(1);
+    
+    let nextNumber = 1;
+    
+    if (lastPatient && lastPatient.patientId) {
+      // Extract the number from P-XXXXX or P-XXXXXX format
+      const match = lastPatient.patientId.match(/P-(\d+)/);
+      if (match && match[1]) {
+        const lastNumber = parseInt(match[1], 10);
+        if (!isNaN(lastNumber)) {
+          nextNumber = lastNumber + 1;
         }
       }
-      
-      // Format with 6 digits padding (000001, 000002, 000003, etc.)
-      this.patientId = `PAT-${nextNumber.toString().padStart(6, '0')}`;
-      
-      // Double-check uniqueness in case of race condition
-      let existing = await Patient.findOne({ patientId: this.patientId });
-      while (existing) {
-        nextNumber++;
-        this.patientId = `PAT-${nextNumber.toString().padStart(6, '0')}`;
-        existing = await Patient.findOne({ patientId: this.patientId });
-      }
-      
-      console.log(`Generated patient ID: ${this.patientId} (sequential number: ${nextNumber})`);
-    } catch (error) {
-      console.error('Error generating sequential patient ID:', error);
-      // Fallback to timestamp-based ID if sequential fails
-      const timestamp = Date.now().toString().slice(-6);
-      this.patientId = `PAT-${timestamp}`;
-      
-      // Ensure uniqueness for fallback
-      const Patient = mongoose.model('Patient');
-      let existing = await Patient.findOne({ patientId: this.patientId });
-      if (existing) {
-        this.patientId = `PAT-${timestamp}-${Math.floor(Math.random() * 1000)}`;
-      }
     }
+    
+    // Format with 5 digits padding (00001, 00002, etc.)
+    this.patientId = `P-${nextNumber.toString().padStart(5, '0')}`;
+    
+    // Double-check uniqueness in case of race condition
+    let existing = await Patient.findOne({ patientId: this.patientId });
+    while (existing) {
+      nextNumber++;
+      this.patientId = `P-${nextNumber.toString().padStart(5, '0')}`;
+      existing = await Patient.findOne({ patientId: this.patientId });
+    }
+    
+    console.log(`Generated patient ID: ${this.patientId} (sequential number: ${nextNumber})`);
+    if (next) next();
+  } catch (error) {
+    console.error('Error generating sequential patient ID:', error);
+    // Fallback to timestamp-based ID if sequential fails
+    const timestamp = Date.now().toString().slice(-5);
+    this.patientId = `P-${timestamp}`;
+    
+    // Ensure uniqueness for fallback
+    const Patient = mongoose.model('Patient');
+    let existing = await Patient.findOne({ patientId: this.patientId });
+    if (existing) {
+      this.patientId = `P-${timestamp}-${Math.floor(Math.random() * 1000)}`;
+    }
+    if (next) next();
   }
-  next();
-});
+};
 
 // Virtual for full patient info
 patientSchema.virtual('fullName').get(function() {

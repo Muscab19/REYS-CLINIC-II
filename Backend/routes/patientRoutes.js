@@ -801,6 +801,38 @@ router.put('/:id/pay-consultation', protect, authorize('reception', 'superadmin'
   }
 });
 
+// @route   DELETE /api/patients/:id
+// @desc    Permanently delete a patient and all associated records
+// @access  Private (superadmin, reception, doctor)
+router.delete('/:id', protect, authorize('superadmin', 'reception', 'doctor'), async (req, res) => {
+  try {
+    const patient = await Patient.findById(req.params.id);
+    
+    if (!patient) {
+      return res.status(404).json({ success: false, msg: 'Patient not found' });
+    }
+    
+    // Delete associated appointment if exists
+    if (patient.appointmentId) {
+      await Appointment.findByIdAndDelete(patient.appointmentId);
+    }
+    
+    // Delete associated lab requests
+    await LabRequest.deleteMany({ patientId: patient._id });
+    
+    // Delete the patient
+    await patient.deleteOne();
+    
+    res.json({
+      success: true,
+      msg: 'Patient and all associated records deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete patient error:', error);
+    res.status(500).json({ success: false, msg: 'Server error' });
+  }
+});
+
 module.exports = router;  
 
 // GET /api/patients

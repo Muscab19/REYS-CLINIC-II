@@ -5,7 +5,7 @@ import {
   Loader, CheckCircle, XCircle, AlertCircle, Users, Stethoscope,
   Microscope, Pill, Hospital, CreditCard, Smartphone, Building, RefreshCw,
   Wallet, Receipt, FileText, Package, FlaskConical, Clock,
-  ChevronLeft, ChevronRight, Eye, X
+  ChevronLeft, ChevronRight, Eye, X, Trash2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -45,6 +45,8 @@ const Revenue = () => {
   });
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] = useState(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -62,294 +64,308 @@ const Revenue = () => {
   }, [dateRange]);
 
   const fetchRevenueData = async () => {
-  setLoading(true);
-  try {
-    const token = localStorage.getItem('token');
-    
-    // Fetch all revenue sources
-    const [
-      patientsRes,
-      labRequestsRes,
-      inpatientsRes,
-      prescriptionsRes
-    ] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/patients?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      }),
-      fetch(`${API_BASE_URL}/api/lab-requests?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      }),
-      fetch(`${API_BASE_URL}/api/inpatients?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      }),
-      fetch(`${API_BASE_URL}/api/prescriptions?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-    ]);
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      
+      // Fetch all revenue sources
+      const [
+        patientsRes,
+        labRequestsRes,
+        inpatientsRes,
+        prescriptionsRes
+      ] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/patients?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${API_BASE_URL}/api/lab-requests?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${API_BASE_URL}/api/inpatients?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${API_BASE_URL}/api/prescriptions?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+      ]);
 
-    const patientsData = await patientsRes.json();
-    const labRequestsData = await labRequestsRes.json();
-    const inpatientsData = await inpatientsRes.json();
-    const prescriptionsData = await prescriptionsRes.json();
-    
-    // Get consultations from localStorage
-    let consultationsData = JSON.parse(localStorage.getItem('consultations') || '[]');
-    const uniqueConsultations = [];
-    const seenConsultationIds = new Set();
-    for (const cons of consultationsData) {
-      if (!seenConsultationIds.has(cons.id)) {
-        seenConsultationIds.add(cons.id);
-        uniqueConsultations.push(cons);
-      }
-    }
-    consultationsData = uniqueConsultations;
-    
-    // Get walk-in sales from localStorage
-    let walkinSalesData = JSON.parse(localStorage.getItem('walkinSales') || '[]');
-    const uniqueWalkinSales = [];
-    const seenSaleIds = new Set();
-    for (const sale of walkinSalesData) {
-      if (!seenSaleIds.has(sale.id)) {
-        seenSaleIds.add(sale.id);
-        uniqueWalkinSales.push(sale);
-      }
-    }
-    walkinSalesData = uniqueWalkinSales;
-
-    // Process all transactions
-    const allTransactions = [];
-
-    // 1. Doctor Consultation Fees from Patient Registration
-    let doctorFeesTotal = 0;
-    let labTestsRegistrationTotal = 0;
-    
-    if (patientsData.success) {
-      const uniquePatients = [];
-      const seenPatientIds = new Set();
-      for (const patient of patientsData.data) {
-        if (!seenPatientIds.has(patient._id)) {
-          seenPatientIds.add(patient._id);
-          uniquePatients.push(patient);
+      const patientsData = await patientsRes.json();
+      const labRequestsData = await labRequestsRes.json();
+      const inpatientsData = await inpatientsRes.json();
+      const prescriptionsData = await prescriptionsRes.json();
+      
+      // Get consultations from localStorage
+      let consultationsData = JSON.parse(localStorage.getItem('consultations') || '[]');
+      const uniqueConsultations = [];
+      const seenConsultationIds = new Set();
+      for (const cons of consultationsData) {
+        if (!seenConsultationIds.has(cons.id)) {
+          seenConsultationIds.add(cons.id);
+          uniqueConsultations.push(cons);
         }
       }
+      consultationsData = uniqueConsultations;
       
-      uniquePatients.forEach(patient => {
-        // Doctor consultation fees - CHECK BOTH paidAmount AND ticketFee
-        if (patient.referredTo === 'doctor') {
-          // Check if payment was made (either paidAmount > 0 OR paymentStatus is 'paid')
-          const isPaid = patient.paymentStatus === 'paid' || (patient.paidAmount > 0);
-          const amount = patient.paidAmount > 0 ? patient.paidAmount : (patient.ticketFee || 0);
+      // Get walk-in sales from localStorage
+      let walkinSalesData = JSON.parse(localStorage.getItem('walkinSales') || '[]');
+      const uniqueWalkinSales = [];
+      const seenSaleIds = new Set();
+      for (const sale of walkinSalesData) {
+        if (!seenSaleIds.has(sale.id)) {
+          seenSaleIds.add(sale.id);
+          uniqueWalkinSales.push(sale);
+        }
+      }
+      walkinSalesData = uniqueWalkinSales;
+
+      // Process all transactions
+      const allTransactions = [];
+
+      // 1. Doctor Consultation Fees from Patient Registration
+      let doctorFeesTotal = 0;
+      let labTestsRegistrationTotal = 0;
+      
+      if (patientsData.success) {
+        const uniquePatients = [];
+        const seenPatientIds = new Set();
+        for (const patient of patientsData.data) {
+          if (!seenPatientIds.has(patient._id)) {
+            seenPatientIds.add(patient._id);
+            uniquePatients.push(patient);
+          }
+        }
+        
+        uniquePatients.forEach(patient => {
+          // Doctor consultation fees - CHECK BOTH paidAmount AND ticketFee
+          if (patient.referredTo === 'doctor') {
+            // Check if payment was made (either paidAmount > 0 OR paymentStatus is 'paid')
+            const isPaid = patient.paymentStatus === 'paid' || (patient.paidAmount > 0);
+            const amount = patient.paidAmount > 0 ? patient.paidAmount : (patient.ticketFee || 0);
+            
+            if (amount > 0) {
+              const transaction = {
+                id: `REG-DOC-${patient._id}`,
+                date: patient.registrationDate,
+                source: 'Doctor Consultation Fee',
+                category: 'doctor_fee',
+                amount: amount,
+                paymentMethod: patient.paymentMethod || 'cash',
+                description: `${isPaid ? 'Paid' : 'Pending'}: Doctor consultation for ${patient.childName}`,
+                patientName: patient.childName,
+                patientId: patient.patientId,
+                reference: patient.ticketId,
+                status: isPaid ? 'completed' : 'pending',
+                sourceType: 'patient',
+                sourceId: patient._id
+              };
+              allTransactions.push(transaction);
+              if (isPaid) {
+                doctorFeesTotal += amount;
+              }
+            }
+          }
           
-          if (amount > 0) {
+          // Lab tests requested at registration (walk-in lab tests)
+          if (patient.referredTo === 'lab-tech' && patient.selectedLabTests && patient.selectedLabTests.length > 0 && patient.paidAmount) {
             const transaction = {
-              id: `REG-DOC-${patient._id}`,
+              id: `REG-LAB-${patient._id}`,
               date: patient.registrationDate,
-              source: 'Doctor Consultation Fee',
-              category: 'doctor_fee',
-              amount: amount,
+              source: 'Lab Tests (Walk-in)',
+              category: 'lab_registration',
+              amount: patient.paidAmount,
               paymentMethod: patient.paymentMethod || 'cash',
-              description: `${isPaid ? 'Paid' : 'Pending'}: Doctor consultation for ${patient.childName}`,
+              description: `Lab tests for ${patient.childName}: ${patient.selectedLabTests.length} test(s)`,
               patientName: patient.childName,
               patientId: patient.patientId,
               reference: patient.ticketId,
-              status: isPaid ? 'completed' : 'pending'
+              status: 'completed',
+              sourceType: 'patient',
+              sourceId: patient._id
             };
             allTransactions.push(transaction);
-            if (isPaid) {
-              doctorFeesTotal += amount;
+            labTestsRegistrationTotal += patient.paidAmount;
+          }
+        });
+      }
+
+      // 2. Doctor-Requested Lab Tests (from consultations)
+      let labTestsDoctorTotal = 0;
+      const processedConsultationLabIds = new Set();
+      
+      if (consultationsData.length > 0) {
+        consultationsData.forEach(consultation => {
+          const uniqueLabKey = `${consultation.patientId}-${consultation.consultationId}-${consultation.labPaidAt}`;
+          
+          if (consultation.labTestsRequested && consultation.labTestsRequested.length > 0 && 
+              consultation.labPaymentStatus === 'paid' && !processedConsultationLabIds.has(uniqueLabKey)) {
+            
+            processedConsultationLabIds.add(uniqueLabKey);
+            const labTotal = consultation.labPaidAmount || consultation.labTestsRequested.reduce((sum, t) => sum + (t.price || 0), 0);
+            
+            if (labTotal > 0) {
+              const transaction = {
+                id: `CONS-LAB-${consultation.id}`,
+                date: consultation.labPaidAt || consultation.date,
+                source: 'Lab Tests (Doctor Request)',
+                category: 'lab_doctor',
+                amount: labTotal,
+                paymentMethod: consultation.labPaymentMethod || 'cash',
+                description: `Lab tests requested by Dr. ${consultation.doctorName} for ${consultation.patientName}`,
+                patientName: consultation.patientName,
+                doctorName: consultation.doctorName,
+                reference: consultation.consultationId,
+                status: 'completed',
+                sourceType: 'consultation',
+                sourceId: consultation.id
+              };
+              allTransactions.push(transaction);
+              labTestsDoctorTotal += labTotal;
             }
           }
-        }
-        
-        // Lab tests requested at registration (walk-in lab tests)
-        if (patient.referredTo === 'lab-tech' && patient.selectedLabTests && patient.selectedLabTests.length > 0 && patient.paidAmount) {
-          const transaction = {
-            id: `REG-LAB-${patient._id}`,
-            date: patient.registrationDate,
-            source: 'Lab Tests (Walk-in)',
-            category: 'lab_registration',
-            amount: patient.paidAmount,
-            paymentMethod: patient.paymentMethod || 'cash',
-            description: `Lab tests for ${patient.childName}: ${patient.selectedLabTests.length} test(s)`,
-            patientName: patient.childName,
-            patientId: patient.patientId,
-            reference: patient.ticketId,
-            status: 'completed'
-          };
-          allTransactions.push(transaction);
-          labTestsRegistrationTotal += patient.paidAmount;
-        }
-      });
-    }
+        });
+      }
 
-    // 2. Doctor-Requested Lab Tests (from consultations)
-    let labTestsDoctorTotal = 0;
-    const processedConsultationLabIds = new Set();
-    
-    if (consultationsData.length > 0) {
-      consultationsData.forEach(consultation => {
-        const uniqueLabKey = `${consultation.patientId}-${consultation.consultationId}-${consultation.labPaidAt}`;
-        
-        if (consultation.labTestsRequested && consultation.labTestsRequested.length > 0 && 
-            consultation.labPaymentStatus === 'paid' && !processedConsultationLabIds.has(uniqueLabKey)) {
-          
-          processedConsultationLabIds.add(uniqueLabKey);
-          const labTotal = consultation.labPaidAmount || consultation.labTestsRequested.reduce((sum, t) => sum + (t.price || 0), 0);
-          
-          if (labTotal > 0) {
+      // 3. Lab Requests from API
+      if (labRequestsData.success) {
+        labRequestsData.data.forEach(request => {
+          if (request.paymentStatus === 'paid' && request.paidAmount) {
             const transaction = {
-              id: `CONS-LAB-${consultation.id}`,
-              date: consultation.labPaidAt || consultation.date,
-              source: 'Lab Tests (Doctor Request)',
-              category: 'lab_doctor',
-              amount: labTotal,
-              paymentMethod: consultation.labPaymentMethod || 'cash',
-              description: `Lab tests requested by Dr. ${consultation.doctorName} for ${consultation.patientName}`,
-              patientName: consultation.patientName,
-              doctorName: consultation.doctorName,
-              reference: consultation.consultationId,
-              status: 'completed'
+              id: `LAB-${request.requestId}`,
+              date: request.paymentDate || request.createdAt,
+              source: 'Lab Test (Direct)',
+              category: 'lab_direct',
+              amount: request.paidAmount,
+              paymentMethod: request.paymentMethod || 'cash',
+              description: `Lab test: ${request.testName} for ${request.patientName}`,
+              patientName: request.patientName,
+              reference: request.requestId,
+              status: 'completed',
+              sourceType: 'lab_request',
+              sourceId: request._id
             };
             allTransactions.push(transaction);
-            labTestsDoctorTotal += labTotal;
           }
-        }
-      });
-    }
-
-    // 3. Lab Requests from API
-    if (labRequestsData.success) {
-      labRequestsData.data.forEach(request => {
-        if (request.paymentStatus === 'paid' && request.paidAmount) {
-          const transaction = {
-            id: `LAB-${request.requestId}`,
-            date: request.paymentDate || request.createdAt,
-            source: 'Lab Test (Direct)',
-            category: 'lab_direct',
-            amount: request.paidAmount,
-            paymentMethod: request.paymentMethod || 'cash',
-            description: `Lab test: ${request.testName} for ${request.patientName}`,
-            patientName: request.patientName,
-            reference: request.requestId,
-            status: 'completed'
-          };
-          allTransactions.push(transaction);
-        }
-      });
-    }
-
-    // 4. Inpatient Payments
-    let inpatientTotal = 0;
-    if (inpatientsData.success) {
-      inpatientsData.data.forEach(inpatient => {
-        if (inpatient.paymentStatus === 'paid' && inpatient.paidAmount) {
-          const transaction = {
-            id: `INP-${inpatient.inpatientId || inpatient._id}`,
-            date: inpatient.paymentDate || inpatient.dischargeDate,
-            source: 'Inpatient Stay',
-            category: 'inpatient',
-            amount: inpatient.paidAmount,
-            paymentMethod: inpatient.paymentMethod || 'cash',
-            description: `${inpatient.nightsCount || 0} nights stay - Room ${inpatient.roomNumber}, Bed ${inpatient.bedNumber}`,
-            patientName: inpatient.childName || inpatient.patientName,
-            reference: inpatient.inpatientId,
-            status: 'completed'
-          };
-          allTransactions.push(transaction);
-          inpatientTotal += inpatient.paidAmount;
-        }
-      });
-    }
-
-    // 5. Pharmacy Prescriptions - IMPROVED
-    let prescriptionsTotal = 0;
-    if (prescriptionsData.success) {
-      prescriptionsData.data.forEach(prescription => {
-        // Check if payment was made (paidAmount > 0 OR paymentStatus is 'paid')
-        const isPaid = prescription.paymentStatus === 'paid' || (prescription.paidAmount > 0);
-        const amount = prescription.paidAmount > 0 ? prescription.paidAmount : 
-                      (prescription.medications ? prescription.medications.length * 5 : 0); // Fallback calculation
-        
-        if (amount > 0 && isPaid) {
-          const transaction = {
-            id: `RX-${prescription.prescriptionId}`,
-            date: prescription.dispensedAt || prescription.createdAt,
-            source: 'Pharmacy Prescription',
-            category: 'pharmacy',
-            amount: amount,
-            paymentMethod: prescription.paymentMethod || 'cash',
-            description: `${prescription.medications?.length || 0} medication(s) for ${prescription.patientName}`,
-            patientName: prescription.patientName,
-            doctorName: prescription.doctor,
-            reference: prescription.prescriptionId,
-            status: prescription.status === 'dispensed' ? 'dispensed' : 'completed'
-          };
-          allTransactions.push(transaction);
-          prescriptionsTotal += amount;
-        }
-      });
-    }
-
-    // 6. Walk-in Sales
-    let walkinTotal = 0;
-    if (walkinSalesData.length > 0) {
-      walkinSalesData.forEach(sale => {
-        const transaction = {
-          id: sale.saleId || sale.id,
-          date: sale.date,
-          source: 'Walk-in Sale',
-          category: 'walkin',
-          amount: sale.paidAmount,
-          paymentMethod: sale.paymentMethod || 'cash',
-          description: `${sale.items.length} item(s) sold`,
-          reference: sale.saleId,
-          items: sale.items,
-          status: 'completed'
-        };
-        allTransactions.push(transaction);
-        walkinTotal += sale.paidAmount;
-      });
-    }
-
-    // Sort by date (newest first)
-    allTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-    // Calculate totals by payment method
-    const paymentMethodTotals = {
-      cash: 0,
-      mobile: 0,
-      bank: 0,
-      card: 0
-    };
-    
-    allTransactions.forEach(t => {
-      const method = t.paymentMethod?.toLowerCase() || 'cash';
-      if (paymentMethodTotals[method] !== undefined) {
-        paymentMethodTotals[method] += t.amount;
-      } else {
-        paymentMethodTotals.cash += t.amount;
+        });
       }
-    });
 
-    setTransactions(allTransactions);
-    setSummary({
-      totalRevenue: allTransactions.reduce((sum, t) => sum + t.amount, 0),
-      doctorFees: doctorFeesTotal,
-      labTestsRegistration: labTestsRegistrationTotal,
-      labTestsDoctor: labTestsDoctorTotal,
-      inpatient: inpatientTotal,
-      pharmacyPrescriptions: prescriptionsTotal,
-      walkinSales: walkinTotal,
-      byPaymentMethod: paymentMethodTotals
-    });
+      // 4. Inpatient Payments
+      let inpatientTotal = 0;
+      if (inpatientsData.success) {
+        inpatientsData.data.forEach(inpatient => {
+          if (inpatient.paymentStatus === 'paid' && inpatient.paidAmount) {
+            const transaction = {
+              id: `INP-${inpatient.inpatientId || inpatient._id}`,
+              date: inpatient.paymentDate || inpatient.dischargeDate,
+              source: 'Inpatient Stay',
+              category: 'inpatient',
+              amount: inpatient.paidAmount,
+              paymentMethod: inpatient.paymentMethod || 'cash',
+              description: `${inpatient.nightsCount || 0} nights stay - Room ${inpatient.roomNumber}, Bed ${inpatient.bedNumber}`,
+              patientName: inpatient.childName || inpatient.patientName,
+              reference: inpatient.inpatientId,
+              status: 'completed',
+              sourceType: 'inpatient',
+              sourceId: inpatient._id
+            };
+            allTransactions.push(transaction);
+            inpatientTotal += inpatient.paidAmount;
+          }
+        });
+      }
 
-  } catch (error) {
-    console.error('Error fetching revenue data:', error);
-    toast.error('Failed to load revenue data');
-  } finally {
-    setLoading(false);
-  }
-};
+      // 5. Pharmacy Prescriptions - IMPROVED
+      let prescriptionsTotal = 0;
+      if (prescriptionsData.success) {
+        prescriptionsData.data.forEach(prescription => {
+          // Check if payment was made (paidAmount > 0 OR paymentStatus is 'paid')
+          const isPaid = prescription.paymentStatus === 'paid' || (prescription.paidAmount > 0);
+          const amount = prescription.paidAmount > 0 ? prescription.paidAmount : 
+                        (prescription.medications ? prescription.medications.length * 5 : 0); // Fallback calculation
+          
+          if (amount > 0 && isPaid) {
+            const transaction = {
+              id: `RX-${prescription.prescriptionId}`,
+              date: prescription.dispensedAt || prescription.createdAt,
+              source: 'Pharmacy Prescription',
+              category: 'pharmacy',
+              amount: amount,
+              paymentMethod: prescription.paymentMethod || 'cash',
+              description: `${prescription.medications?.length || 0} medication(s) for ${prescription.patientName}`,
+              patientName: prescription.patientName,
+              doctorName: prescription.doctor,
+              reference: prescription.prescriptionId,
+              status: prescription.status === 'dispensed' ? 'dispensed' : 'completed',
+              sourceType: 'prescription',
+              sourceId: prescription._id
+            };
+            allTransactions.push(transaction);
+            prescriptionsTotal += amount;
+          }
+        });
+      }
+
+      // 6. Walk-in Sales
+      let walkinTotal = 0;
+      if (walkinSalesData.length > 0) {
+        walkinSalesData.forEach(sale => {
+          const transaction = {
+            id: sale.saleId || sale.id,
+            date: sale.date,
+            source: 'Walk-in Sale',
+            category: 'walkin',
+            amount: sale.paidAmount,
+            paymentMethod: sale.paymentMethod || 'cash',
+            description: `${sale.items.length} item(s) sold`,
+            reference: sale.saleId,
+            items: sale.items,
+            status: 'completed',
+            sourceType: 'walkin',
+            sourceId: sale.id
+          };
+          allTransactions.push(transaction);
+          walkinTotal += sale.paidAmount;
+        });
+      }
+
+      // Sort by date (newest first)
+      allTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      // Calculate totals by payment method
+      const paymentMethodTotals = {
+        cash: 0,
+        mobile: 0,
+        bank: 0,
+        card: 0
+      };
+      
+      allTransactions.forEach(t => {
+        const method = t.paymentMethod?.toLowerCase() || 'cash';
+        if (paymentMethodTotals[method] !== undefined) {
+          paymentMethodTotals[method] += t.amount;
+        } else {
+          paymentMethodTotals.cash += t.amount;
+        }
+      });
+
+      setTransactions(allTransactions);
+      setSummary({
+        totalRevenue: allTransactions.reduce((sum, t) => sum + t.amount, 0),
+        doctorFees: doctorFeesTotal,
+        labTestsRegistration: labTestsRegistrationTotal,
+        labTestsDoctor: labTestsDoctorTotal,
+        inpatient: inpatientTotal,
+        pharmacyPrescriptions: prescriptionsTotal,
+        walkinSales: walkinTotal,
+        byPaymentMethod: paymentMethodTotals
+      });
+
+    } catch (error) {
+      console.error('Error fetching revenue data:', error);
+      toast.error('Failed to load revenue data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleDateChange = (e) => {
     setDateRange({
@@ -361,6 +377,87 @@ const Revenue = () => {
   const handleViewDetails = (transaction) => {
     setSelectedTransaction(transaction);
     setShowDetailsModal(true);
+  };
+
+  const handleDeleteTransaction = (transaction) => {
+    setTransactionToDelete(transaction);
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDeleteTransaction = async () => {
+    if (!transactionToDelete) return;
+    
+    try {
+      const token = localStorage.getItem('token');
+      
+      // Delete based on source type
+      let deleteUrl = '';
+      switch (transactionToDelete.sourceType) {
+        case 'patient':
+          deleteUrl = `${API_BASE_URL}/api/patients/${transactionToDelete.sourceId}`;
+          break;
+        case 'consultation':
+          // For consultations stored in localStorage
+          const consultations = JSON.parse(localStorage.getItem('consultations') || '[]');
+          const updatedConsultations = consultations.filter(c => c.id !== transactionToDelete.sourceId);
+          localStorage.setItem('consultations', JSON.stringify(updatedConsultations));
+          toast.success('Transaction deleted successfully');
+          fetchRevenueData();
+          setShowDeleteConfirm(false);
+          setTransactionToDelete(null);
+          return;
+        case 'walkin':
+          // For walk-in sales stored in localStorage
+          const walkinSales = JSON.parse(localStorage.getItem('walkinSales') || '[]');
+          const updatedWalkinSales = walkinSales.filter(s => s.id !== transactionToDelete.sourceId);
+          localStorage.setItem('walkinSales', JSON.stringify(updatedWalkinSales));
+          toast.success('Transaction deleted successfully');
+          fetchRevenueData();
+          setShowDeleteConfirm(false);
+          setTransactionToDelete(null);
+          return;
+        case 'inpatient':
+          deleteUrl = `${API_BASE_URL}/api/inpatients/${transactionToDelete.sourceId}`;
+          break;
+        case 'lab_request':
+          deleteUrl = `${API_BASE_URL}/api/lab-requests/${transactionToDelete.sourceId}`;
+          break;
+        case 'prescription':
+          deleteUrl = `${API_BASE_URL}/api/prescriptions/${transactionToDelete.sourceId}`;
+          break;
+        default:
+          toast.error('Cannot delete this transaction');
+          setShowDeleteConfirm(false);
+          setTransactionToDelete(null);
+          return;
+      }
+      
+      if (deleteUrl) {
+        const response = await fetch(deleteUrl, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          toast.success('Transaction deleted successfully');
+          fetchRevenueData();
+        } else {
+          toast.error(data.msg || 'Failed to delete transaction');
+        }
+      }
+      
+      setShowDeleteConfirm(false);
+      setTransactionToDelete(null);
+    } catch (error) {
+      console.error('Error deleting transaction:', error);
+      toast.error('Failed to delete transaction');
+      setShowDeleteConfirm(false);
+      setTransactionToDelete(null);
+    }
   };
 
   const handleExportCSV = () => {
@@ -734,12 +831,22 @@ const Revenue = () => {
                           <span className="capitalize text-sm">{transaction.paymentMethod}</span>
                         </td>
                         <td className="px-6 py-4">
-                          <button
-                            onClick={() => handleViewDetails(transaction)}
-                            className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => handleViewDetails(transaction)}
+                              className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg"
+                              title="View Details"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTransaction(transaction)}
+                              className="p-1 text-red-600 hover:bg-red-50 rounded-lg"
+                              title="Delete Transaction"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -838,10 +945,46 @@ const Revenue = () => {
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && transactionToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full">
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="w-8 h-8 text-red-600" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Transaction</h3>
+              <p className="text-gray-500 mb-4">
+                Are you sure you want to delete this transaction?
+                <br />
+                <span className="text-sm font-medium">Amount: {formatCurrency(transactionToDelete.amount)}</span>
+                <br />
+                <span className="text-xs text-gray-400">This action cannot be undone.</span>
+              </p>
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setTransactionToDelete(null);
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDeleteTransaction}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default Revenue;
-
-// const fetchRevenueData = async () => {

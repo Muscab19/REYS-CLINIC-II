@@ -305,6 +305,31 @@ const DoctorConsultation = () => {
     }
   }, [user]);
 
+  // Delete patient function
+  const handleDeletePatient = async (patient) => {
+    if (window.confirm(`Are you sure you want to permanently delete ${patient.childName}? This action cannot be undone.`)) {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE_URL}/api/patients/${patient._id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          toast.success('Patient deleted successfully');
+          fetchPatients(); // Refresh the list
+        } else {
+          toast.error(data.msg || 'Failed to delete patient');
+        }
+      } catch (error) {
+        console.error('Error deleting patient:', error);
+        toast.error('Failed to delete patient');
+      }
+    }
+  };
+
   const fetchPatients = async () => {
     setLoading(true);
     try {
@@ -600,8 +625,9 @@ const DoctorConsultation = () => {
   const handlePrintLabRequest = () => {
     const logoBase64 = logo;
     const printWindow = window.open('', '_blank');
-    const currentDate = new Date().toLocaleDateString();
-    const labSerialId = `LAB-${Date.now()}`;
+    const currentDate = new Date().toLocaleDateString('en-GB');
+    const examinedDate = new Date().toLocaleDateString('en-GB');
+    const labRef = `LAB${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
     
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -609,73 +635,238 @@ const DoctorConsultation = () => {
         <head>
           <title>REYS CLINIC - Lab Test Request</title>
           <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Times New Roman', Arial, sans-serif; background: #fff; padding: 40px; }
-            .report { max-width: 1000px; margin: 0 auto; border: 1px solid #ddd; background: #fff; }
-            .header { text-align: center; padding: 30px; border-bottom: 2px solid #D01A2B; }
-            .logo-img { max-width: 350px; height: auto; margin-bottom: 10px; }
-            .clinic-name { font-size: 24px; font-weight: bold; color: #D01A2B; margin-bottom: 5px; }
-            .clinic-address { font-size: 12px; color: #666; margin-bottom: 10px; }
-            .divider { border-top: 1px dashed #999; margin: 15px 0; }
-            .info-section { padding: 20px 30px; background: #f9f9f9; }
-            .info-row { display: flex; margin-bottom: 10px; }
-            .info-label { width: 150px; font-weight: bold; color: #333; }
-            .info-value { flex: 1; color: #555; }
-            .test-section { padding: 20px 30px; }
-            .test-title { font-size: 18px; font-weight: bold; color: #D01A2B; margin-bottom: 15px; border-left: 4px solid #D01A2B; padding-left: 10px; }
-            .test-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            .test-table th, .test-table td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-            .test-table th { background: #f5f5f5; font-weight: bold; }
-            .footer { padding: 20px 30px; border-top: 1px solid #ddd; text-align: center; font-size: 11px; color: #999; }
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
+              background: #fff;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+              padding: 0;
+              margin: 0;
+            }
+            /* A5 size - exactly 148mm x 210mm */
+            .report {
+              width: 148mm;
+              height: 210mm;
+              background: white;
+              
+              box-shadow: 0 0 10px rgba(0,0,0,0.1);
+              margin: 0;
+              padding: 0;
+              page-break-after: avoid;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+            .report-content {
+              padding: 8mm 6mm;
+              height: 100%;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+            }
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #c0392b;
+              padding-bottom: 8px;
+              margin-bottom: 10px;
+            }
+            .logo-img {
+              max-width: 150px;
+              height: auto;
+              margin-bottom: 5px;
+            }
+            .doctor-name {
+              font-size: 14px;
+              font-weight: bold;
+              margin: 3px 0 2px;
+              text-transform: capitalize;
+            }
+            .doctor-title {
+              font-size: 11px;
+              font-weight: bold;
+              color: #333;
+              margin-bottom: 5px;
+            }
+            .clinic-address {
+              font-size: 10px;
+              font-weight: bold;
+              color: #333;
+              margin-top: 3px;
+            }
+            .contact-info {
+              font-size: 10px;
+              font-weight: bold;
+              color: #333;
+            }
+            .info-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 4px;
+              margin-bottom: 10px;
+              padding: 6px;
+              background: #f8f9fa;
+              border: 1px solid #dee2e6;
+            }
+            .info-row {
+              display: flex;
+              align-items: baseline;
+              font-size: 9px;
+            }
+            .info-label {
+              font-weight: bold;
+              width: 75px;
+              min-width: 75px;
+            }
+            .info-value {
+              color: #212529;
+            }
+            .test-title {
+              text-align: center;
+              font-size: 11px;
+              font-weight: bold;
+              text-transform: uppercase;
+              color: #c0392b;
+              margin: 8px 0;
+              padding: 4px;
+              background: #f1f3f5;
+            }
+            .test-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 6px 0;
+            }
+            .test-table th {
+              background: #e9ecef;
+              padding: 5px;
+              text-align: left;
+              font-weight: bold;
+              font-size: 9px;
+              border-bottom: 1px solid #dee2e6;
+            }
+            .test-table td {
+              padding: 4px 5px;
+              font-size: 9px;
+              border-bottom: 1px solid #f1f3f5;
+            }
+            .footer {
+              margin-top: 12px;
+              padding: 6px;
+              border-top: 1px solid #dee2e6;
+              text-align: center;
+              font-size: 8px;
+              color: #666;
+            }
+            /* Prevent page breaks */
+            @media print {
+              body {
+                padding: 0;
+                margin: 0;
+              }
+              .report {
+                
+                
+                page-break-after: avoid;
+                page-break-inside: avoid;
+                break-inside: avoid;
+                break-after: avoid;
+              }
+              html, body {
+                height: auto;
+                overflow: visible;
+              }
+            }
+            @page {
+              size: A5;
+              margin: 0;
+            }
           </style>
         </head>
         <body>
           <div class="report">
-            <div class="header">
-              <img src="${logoBase64}" alt="REYS CLINIC Logo" class="logo-img" />
-              <div class="clinic-address">Wadad Sodonka, NBC, Albarako, Mogadishu, Somalia</div>
-              <h3 class="text-3xl"> Dr. ${user?.name}</h3>
-              <div>Pediatric Specialist</div>
-            </div>
-            <div class="info-section">
-              <div class="info-row"><div class="info-label">Name:</div><div class="info-value">${selectedPatient.childName}</div><div class="info-label" style="margin-left: 30px;">Patient ID:</div><div class="info-value">${selectedPatient.patientId || 'PAT-' + selectedPatient._id?.slice(-6)}</div></div>
-              <div class="info-row"><div class="info-label">Age:</div><div class="info-value">${selectedPatient.childAge} years</div><div class="info-label" style="margin-left: 30px;">Gender:</div><div class="info-value">${selectedPatient.childGender || 'Not specified'}</div></div>
-              <div class="info-row"><div class="info-label">Parent/Guardian:</div><div class="info-value">${selectedPatient.parentName}</div><div class="info-label" style="margin-left: 30px;">Phone:</div><div class="info-value">${selectedPatient.parentPhone}</div></div>
-              <div class="divider"></div>
-              <div class="info-row"><div class="info-label">Lab Ref:</div><div class="info-value">${labSerialId}</div><div class="info-label" style="margin-left: 30px;">Examined Date:</div><div class="info-value">${currentDate}</div></div>
-              <div class="info-row"><div class="info-label">Report Date:</div><div class="info-value">${currentDate}</div></div>
-            </div>
-            <div class="test-section">
-              <div class="test-title">LABORATORY TEST REQUEST</div>
-              <div class="info-row"><div class="info-label">Requested by:</div><div class="info-value">Dr. ${user?.name}</div></div>
-              <div class="info-row"><div class="info-label">Clinical Notes:</div><div class="info-value">${consultationData.chiefComplaint || 'N/A'}</div></div>
-              <table class="test-table">
-                <thead><tr><th>Test Name</th><th>Category</th><th>Notes</th></tr></thead>
-                <tbody>
-                  ${selectedLabTests.map(test => `
+            <div class="report-content">
+              <div>
+                <div class="header">
+                  <img src="${logoBase64}" alt="REYS CLINIC Logo" class="logo-img" />
+                  <div class="doctor-name">Dr. ${user?.name}</div>
+                  <div class="doctor-title">MBBS, MD, Pediatric Specialist</div>
+                  <div class="clinic-address">Wadada Sodonka, NBC, Albarako, Hodan, Mogadishu, Somalia</div>
+                  <div class="contact-info">Tel: 612674455 | 611477201</div>
+                </div>
+                
+                <div class="info-grid">
+                  <div class="info-row">
+                    <span class="info-label">Name:</span>
+                    <span class="info-value">${selectedPatient.childName}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Patient ID:</span>
+                    <span class="info-value">${selectedPatient.patientId || 'P-' + selectedPatient._id?.slice(-6)}</span>                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Age:</span>
+                    <span class="info-value">${selectedPatient.childAge} years</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Sex:</span>
+                    <span class="info-value">${selectedPatient.childGender || 'Not specified'}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Parent:</span>
+                    <span class="info-value">${selectedPatient.parentName}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Lab Ref:</span>
+                    <span class="info-value">${labRef}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Examined:</span>
+                    <span class="info-value">${examinedDate}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Reported:</span>
+                    <span class="info-value">${currentDate}</span>
+                  </div>
+                </div>
+                
+                <div class="test-title">LABORATORY TEST REQUEST</div>
+                
+                <table class="test-table">
+                  <thead>
                     <tr>
-                      <td>${test.name}</td>
-                      <td>${test.category || 'General'}</td>
-                      <td>${test.notes || '-'}</td>
+                      <th>Test Name</th>
+                      <th>Category</th>
                     </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-            <div class="footer">
-              <p>Requested by: Dr. ${user?.name}</p>
-              <p>-----------------------------------END OF REPORT------------------------------------------</p>
+                  </thead>
+                  <tbody>
+                    ${selectedLabTests.map(test => `
+                      <tr>
+                        <td>${test.name}</td>
+                        <td>${test.category || 'General'}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+              
+              <div class="footer">
+                <p>** END OF REQUEST **</p>
+                <p>Thank you for choosing REYS CLINIC</p>
+              </div>
             </div>
           </div>
         </body>
       </html>
     `);
     printWindow.document.close();
-    printWindow.print();
     setShowLabRequestPrint(false);
   };
 
-  const handleSendPrescriptions = () => {
+const handleSendPrescriptions = () => {
     if (selectedMedications.length === 0) {
       toast.warning('Please add prescriptions');
       return;
@@ -686,7 +877,7 @@ const DoctorConsultation = () => {
   const handlePrintPrescription = () => {
     const logoBase64 = logo;
     const printWindow = window.open('', '_blank');
-    const currentDate = new Date().toLocaleDateString();
+    const currentDate = new Date().toLocaleDateString('en-GB');
     
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -694,79 +885,245 @@ const DoctorConsultation = () => {
         <head>
           <title>REYS CLINIC - Prescription</title>
           <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Times New Roman', Arial, sans-serif; background: #fff; padding: 40px; }
-            .report { max-width: 1000px; margin: 0 auto; border: 1px solid #ddd; background: #fff; }
-            .header { text-align: center; padding: 30px; border-bottom: 2px solid #D01A2B; }
-            .logo-img { max-width: 350px; height: auto; margin-bottom: 10px; }
-            .clinic-name { font-size: 24px; font-weight: bold; color: #D01A2B; margin-bottom: 5px; }
-            .clinic-address { font-size: 12px; color: #666; margin-bottom: 10px; }
-            .divider { border-top: 1px dashed #999; margin: 15px 0; }
-            .info-section { padding: 20px 30px; background: #f9f9f9; }
-            .info-row { display: flex; margin-bottom: 10px; }
-            .info-label { width: 150px; font-weight: bold; color: #333; }
-            .info-value { flex: 1; color: #555; }
-            .prescription-section { padding: 20px 30px; }
-            .prescription-title { font-size: 18px; font-weight: bold; color: #D01A2B; margin-bottom: 15px; border-left: 4px solid #D01A2B; padding-left: 10px; }
-            .med-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            .med-table th, .med-table td { padding: 12px; text-align: left; border: 1px solid #ddd; }
-            .med-table th { background: #f5f5f5; font-weight: bold; }
-            .footer { padding: 20px 30px; border-top: 1px solid #ddd; text-align: center; font-size: 11px; color: #999; }
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
+              background: #fff;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+              padding: 0;
+              margin: 0;
+            }
+            .report {
+              width: 148mm;
+              height: 210mm;
+              background: white;
+              
+              box-shadow: 0 0 10px rgba(0,0,0,0.1);
+              margin: 0;
+              padding: 0;
+              page-break-after: avoid;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+            .report-content {
+              padding: 8mm 6mm;
+              height: 100%;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+            }
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #c0392b;
+              padding-bottom: 8px;
+              margin-bottom: 10px;
+            }
+            .logo-img {
+              max-width: 150px;
+              height: auto;
+              margin-bottom: 5px;
+            }
+            .doctor-name {
+              font-size: 14px;
+              font-weight: bold;
+              margin: 3px 0 2px;
+              text-transform: capitalize;
+            }
+            .doctor-title {
+              font-size: 11px;
+              font-weight: bold;
+              color: #333;
+              margin-bottom: 5px;
+            }
+            .clinic-address {
+              font-size: 10px;
+              font-weight: bold;
+              color: #333;
+              margin-top: 3px;
+            }
+            .contact-info {
+              font-size: 10px;
+              font-weight: bold;
+              color: #333;
+            }
+            .info-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 4px;
+              margin-bottom: 10px;
+              padding: 6px;
+              background: #f8f9fa;
+              border: 1px solid #dee2e6;
+            }
+            .info-row {
+              display: flex;
+              align-items: baseline;
+              font-size: 9px;
+            }
+            .info-label {
+              font-weight: bold;
+              width: 75px;
+              min-width: 75px;
+            }
+            .info-value {
+              color: #212529;
+            }
+            .prescription-title {
+              text-align: center;
+              font-size: 11px;
+              font-weight: bold;
+              text-transform: uppercase;
+              color: #c0392b;
+              margin: 8px 0;
+              padding: 4px;
+              background: #f1f3f5;
+            }
+            .med-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 6px 0;
+            }
+            .med-table th {
+              background: #e9ecef;
+              padding: 5px;
+              text-align: left;
+              font-weight: bold;
+              font-size: 8px;
+              border-bottom: 1px solid #dee2e6;
+            }
+            .med-table td {
+              padding: 4px 5px;
+              font-size: 8px;
+              border-bottom: 1px solid #f1f3f5;
+            }
+            .doctor-notes {
+              margin-top: 8px;
+              padding: 5px;
+              background: #fef3c7;
+              font-size: 8px;
+            }
+            .footer {
+              margin-top: 10px;
+              padding: 5px;
+              border-top: 1px solid #dee2e6;
+              text-align: center;
+              font-size: 8px;
+              color: #666;
+            }
+            @media print {
+              body {
+                padding: 0;
+                margin: 0;
+              }
+              .report {
+                
+                
+                page-break-after: avoid;
+                page-break-inside: avoid;
+                break-inside: avoid;
+                break-after: avoid;
+              }
+              html, body {
+                height: auto;
+                overflow: visible;
+              }
+            }
+            @page {
+              size: A5;
+              margin: 0;
+            }
           </style>
         </head>
         <body>
           <div class="report">
-            <div class="header">
-              <img src="${logoBase64}" alt="REYS CLINIC Logo" class="logo-img" />
-              <div class="clinic-address">Wadad Sodonka, NBC, Albarako, Mogadishu, Somalia</div>
-              <h3 class="text-3xl"> Dr. ${user?.name}</h3>
-              <div>Pediatric Specialist</div>
-            </div>
-            <div class="info-section">
-              <div class="info-row"><div class="info-label">Name:</div><div class="info-value">${selectedPatient.childName}</div><div class="info-label" style="margin-left: 30px;">Patient ID:</div><div class="info-value">${selectedPatient.patientId || 'PAT-' + selectedPatient._id?.slice(-6)}</div></div>
-              <div class="info-row"><div class="info-label">Age:</div><div class="info-value">${selectedPatient.childAge} years</div><div class="info-label" style="margin-left: 30px;">Gender:</div><div class="info-value">${selectedPatient.childGender || 'Not specified'}</div></div>
-              <div class="info-row"><div class="info-label">Parent/Guardian:</div><div class="info-value">${selectedPatient.parentName}</div><div class="info-label" style="margin-left: 30px;">Phone:</div><div class="info-value">${selectedPatient.parentPhone}</div></div>
-              <div class="divider"></div>
-              <div class="info-row"><div class="info-label">Date:</div><div class="info-value">${currentDate}</div></div>
-            </div>
-            <div class="prescription-section">
-              <div class="prescription-title">MEDICAL PRESCRIPTION</div>
-              <table class="med-table">
-                <thead>
-                  <tr>
-                    <th>Medication</th>
-                    <th>Dosage</th>
-                    <th>Frequency</th>
-                    <th>Duration</th>
-                    <th>Route</th>
-                    <th>Instructions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${selectedMedications.map(med => `
+            <div class="report-content">
+              <div>
+                <div class="header">
+                  <img src="${logoBase64}" alt="REYS CLINIC Logo" class="logo-img" />
+                  <div class="doctor-name">Dr. ${user?.name}</div>
+                  <div class="doctor-title">MBBS, MD, Pediatric Specialist</div>
+                  <div class="clinic-address">Wadada Sodonka, NBC, Albarako, Hodan, Mogadishu, Somalia</div>
+                  <div class="contact-info">Tel: 612674455 | 611477201</div>
+                </div>
+                
+                <div class="info-grid">
+                  <div class="info-row">
+                    <span class="info-label">Name:</span>
+                    <span class="info-value">${selectedPatient.childName}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Patient ID:</span>
+                    <span class="info-value">${selectedPatient.patientId || 'P-' + selectedPatient._id?.slice(-6)}</span>                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Age:</span>
+                    <span class="info-value">${selectedPatient.childAge} years</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Sex:</span>
+                    <span class="info-value">${selectedPatient.childGender || 'Not specified'}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Parent:</span>
+                    <span class="info-value">${selectedPatient.parentName}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Date:</span>
+                    <span class="info-value">${currentDate}</span>
+                  </div>
+                </div>
+                
+                <div class="prescription-title">MEDICAL PRESCRIPTION</div>
+                
+                <table class="med-table">
+                  <thead>
                     <tr>
-                      <td>${med.name}${med.unit ? ` (${med.unit})` : ''}</td>
-                      <td>${med.dosage || '—'}</td>
-                      <td>${med.frequency || '—'}</td>
-                      <td>${med.duration || '—'}</td>
-                      <td>${med.route || '—'}</td>
-                      <td>${med.instructions || '—'}</td>
+                      <th>Medication</th>
+                      <th>Dosage</th>
+                      <th>Frequency</th>
+                      <th>Duration</th>
+                      <th>Route</th>
+                      <th>Instructions</th>
                     </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-              <div style="margin-top: 20px;"><strong>Doctor's Notes:</strong> ${consultationData.notes || 'N/A'}</div>
-            </div>
-            <div class="footer">
-              <p>Prescribed by: Dr. ${user?.name}</p>
-              <p>-----------------------------------END OF PRESCRIPTION------------------------------------------</p>
+                  </thead>
+                  <tbody>
+                    ${selectedMedications.map(med => `
+                      <tr>
+                        <td>${med.name}${med.unit ? ` (${med.unit})` : ''}</td>
+                        <td>${med.dosage || '—'}</td>
+                        <td>${med.frequency || '—'}</td>
+                        <td>${med.duration || '—'}</td>
+                        <td>${med.route || '—'}</td>
+                        <td>${med.instructions || '—'}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+                
+                ${consultationData.notes ? `
+                  <div class="doctor-notes">
+                    <strong>Doctor's Notes:</strong> ${consultationData.notes}
+                  </div>
+                ` : ''}
+              </div>
+              
+              <div class="footer">
+                <p>Prescribed by: Dr. ${user?.name}</p>
+                <p>** END OF PRESCRIPTION **</p>
+                <p>Thank you for choosing REYS CLINIC</p>
+              </div>
             </div>
           </div>
         </body>
       </html>
     `);
     printWindow.document.close();
-    printWindow.print();
     setShowPrescriptionPrint(false);
   };
 
@@ -1142,7 +1499,7 @@ const handleCompleteConsultation = async () => {
                   <tbody className="divide-y">
                     {currentPatients.map((patient) => (
                       <tr key={patient._id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4"><span className="font-mono text-sm text-[#D01A2B]">{patient.patientId}</span></td>
+                        <td className="px-6 py-4"><span className="font-mono text-sm text-[#D01A2B]">{patient.patientId || `P-${patient._id?.slice(-6)}`}</span></td>
                         <td className="px-6 py-4">
                           <div className="flex items-center space-x-2 flex-wrap">
                             <Baby className="w-4 h-4 text-gray-400" />
@@ -1178,6 +1535,13 @@ const handleCompleteConsultation = async () => {
                               title="View Lab Results"
                             >
                               <TestTube className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={() => handleDeletePatient(patient)} 
+                              className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors" 
+                              title="Delete Patient"
+                            >
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
                         </td>
@@ -1734,4 +2098,4 @@ const handleCompleteConsultation = async () => {
 
 export default DoctorConsultation;
 
-// /in-pati
+// <p className="text-sm text-gray-500">{selectedPatient.childName} • Age: {selectedPatient.childAge} years</p>

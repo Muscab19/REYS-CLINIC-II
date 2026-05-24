@@ -281,7 +281,6 @@ const DoctorDashboard = () => {
     { id: 'overview', label: 'Dashboard', icon: <Home className="w-5 h-5" />, path: '/doctor-dashboard' },
     { id: 'consultations', label: 'Consultations', icon: <BookOpen className="w-5 h-5" />, path: '/consultations' },
     { id: 'master-data', label: 'Master Data', icon: <Database className="w-5 h-5" />, path: '/doctor-master-data' },
-    { id: 'profile', label: 'Profile', icon: <User className="w-5 h-5" />, path: '/profile' },
   ];
 
   if (!isAuthenticated || user?.role !== 'doctor') {
@@ -374,14 +373,6 @@ const DoctorDashboard = () => {
               Welcome back, Dr. {user?.name}!
             </p>
           </div>
-          
-          <Link
-            to="/book-appointment"
-            className="mt-4 md:mt-0 flex items-center space-x-2 px-4 py-2 bg-[#D01A2B] text-white rounded-xl hover:bg-red-700 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New Appointment</span>
-          </Link>
         </div>
 
         {/* Nested Routes */}

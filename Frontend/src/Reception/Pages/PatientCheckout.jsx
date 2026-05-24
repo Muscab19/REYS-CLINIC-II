@@ -71,64 +71,64 @@ const PatientCheckout = () => {
   }, []);
 
   const fetchData = async () => {
-  setLoading(true);
-  try {
-    const storedConsultations = JSON.parse(localStorage.getItem('consultations') || '[]');
-    
-    console.log('All stored consultations:', storedConsultations);
-    
-    // Only get consultations with unpaid lab tests - use Set to track unique
-    const processedPatientIds = new Set();
-    const patientsList = [];
-    
-    for (const cons of storedConsultations) {
-      // Only process if has lab tests and not paid and status is pending_payment
-      if (cons.labTestsRequested && 
-          cons.labTestsRequested.length > 0 && 
-          cons.labPaymentStatus !== 'paid' && 
-          cons.status === 'pending_payment') {
-        
-        const patientId = cons.patientId;
-        
-        // Skip if already processed this patient to avoid duplicates
-        if (processedPatientIds.has(patientId)) {
-          continue;
-        }
-        processedPatientIds.add(patientId);
-        
-        // Get unpaid lab tests
-        const unpaidLabTests = cons.labTestsRequested.filter(test => !test.paid);
-        
-        if (unpaidLabTests.length > 0) {
-          const labTotal = unpaidLabTests.reduce((sum, lab) => sum + (lab.price || 0), 0);
+    setLoading(true);
+    try {
+      const storedConsultations = JSON.parse(localStorage.getItem('consultations') || '[]');
+      
+      console.log('All stored consultations:', storedConsultations);
+      
+      // Only get consultations with unpaid lab tests - use Set to track unique
+      const processedPatientIds = new Set();
+      const patientsList = [];
+      
+      for (const cons of storedConsultations) {
+        // Only process if has lab tests and not paid and status is pending_payment
+        if (cons.labTestsRequested && 
+            cons.labTestsRequested.length > 0 && 
+            cons.labPaymentStatus !== 'paid' && 
+            cons.status === 'pending_payment') {
           
-          patientsList.push({
-            _id: patientId,
-            childName: cons.patientName,
-            childAge: cons.childAge,
-            parentName: cons.parentName,
-            parentPhone: cons.parentPhone,
-            ticketId: cons.ticketId || `CONS-${patientId?.slice(-6) || Date.now()}`,
-            consultations: [cons],
-            labTestsRequested: unpaidLabTests,
-            totalLabAmount: labTotal
-          });
+          const patientId = cons.patientId;
+          
+          // Skip if already processed this patient to avoid duplicates
+          if (processedPatientIds.has(patientId)) {
+            continue;
+          }
+          processedPatientIds.add(patientId);
+          
+          // Get unpaid lab tests
+          const unpaidLabTests = cons.labTestsRequested.filter(test => !test.paid);
+          
+          if (unpaidLabTests.length > 0) {
+            const labTotal = unpaidLabTests.reduce((sum, lab) => sum + (lab.price || 0), 0);
+            
+            patientsList.push({
+              _id: patientId,
+              childName: cons.patientName,
+              childAge: cons.childAge,
+              parentName: cons.parentName,
+              parentPhone: cons.parentPhone,
+              ticketId: cons.ticketId || `CONS-${patientId?.slice(-6) || Date.now()}`,
+              consultations: [cons],
+              labTestsRequested: unpaidLabTests,
+              totalLabAmount: labTotal
+            });
+          }
         }
       }
+      
+      console.log('Final patient list:', patientsList);
+      
+      setPatients(patientsList);
+      setConsultations(storedConsultations);
+      
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      toast.error('Failed to load data');
+    } finally {
+      setLoading(false);
     }
-    
-    console.log('Final patient list:', patientsList);
-    
-    setPatients(patientsList);
-    setConsultations(storedConsultations);
-    
-  } catch (error) {
-    console.error('Error fetching data:', error);
-    toast.error('Failed to load data');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   const handleSelectPatient = (patient) => {
     setSelectedPatient(patient);
@@ -177,187 +177,409 @@ const PatientCheckout = () => {
   };
 
   const confirmPayment = async () => {
-  if (!validatePaymentDetails()) {
-    return;
-  }
-  
-  setProcessingPayment(true);
-  
-  try {
-    const token = localStorage.getItem('token');
-    
-    if (!token) {
-      toast.error('Authentication token not found. Please login again.');
-      setProcessingPayment(false);
+    if (!validatePaymentDetails()) {
       return;
     }
     
-    const allLabTests = selectedPatient.labTestsRequested || [];
-    const totalAmount = calculateTotal();
+    setProcessingPayment(true);
     
-    // SAVE TO DATABASE - This is the key fix
-    const saveResponse = await fetch(`${API_BASE_URL}/api/lab-payments`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        consultationId: selectedPatient.consultations[0]?.id,
+    try {
+      const token = localStorage.getItem('token');
+      
+      if (!token) {
+        toast.error('Authentication token not found. Please login again.');
+        setProcessingPayment(false);
+        return;
+      }
+      
+      const allLabTests = selectedPatient.labTestsRequested || [];
+      const totalAmount = calculateTotal();
+      
+      // SAVE TO DATABASE
+      const saveResponse = await fetch(`${API_BASE_URL}/api/lab-payments`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          consultationId: selectedPatient.consultations[0]?.id,
+          patientId: selectedPatient._id,
+          patientName: selectedPatient.childName,
+          patientAge: selectedPatient.childAge,
+          parentName: selectedPatient.parentName,
+          parentPhone: selectedPatient.parentPhone,
+          doctorName: selectedPatient.doctorName,
+          labTests: allLabTests,
+          totalAmount: totalAmount,
+          paidAmount: totalAmount,
+          paymentMethod: paymentType === 'mobile' ? 'Mobile Money' : (paymentType === 'bank' ? 'Bank Transfer' : 'Cash'),
+          mobileNumber: paymentType === 'mobile' ? mobileNumber : undefined,
+          bankLast4: paymentType === 'bank' ? bankLast4 : undefined,
+          paymentDate: new Date().toISOString()
+        })
+      });
+      
+      const saveData = await saveResponse.json();
+      
+      if (!saveData.success) {
+        toast.error('Failed to save payment to database');
+      }
+      
+      // Update localStorage consultations
+      const updatedConsultations = consultations.map(cons => {
+        if (cons.patientId === selectedPatient._id && cons.labTestsRequested) {
+          const updatedLabTests = cons.labTestsRequested.map(test => {
+            const isInSelected = allLabTests.some(lt => lt.id === test.id || lt.name === test.name);
+            if (isInSelected) {
+              return { ...test, paid: true, paidAt: new Date().toISOString() };
+            }
+            return test;
+          });
+          
+          return { 
+            ...cons, 
+            labTestsRequested: updatedLabTests,
+            labPaymentStatus: 'paid',
+            labPaidAt: new Date().toISOString(),
+            labPaidAmount: totalAmount,
+            labPaymentMethod: paymentType === 'mobile' ? 'Mobile Money' : (paymentType === 'bank' ? 'Bank Transfer' : 'Cash'),
+            status: 'completed'
+          };
+        }
+        return cons;
+      });
+      
+      localStorage.setItem('consultations', JSON.stringify(updatedConsultations));
+      
+      // Create invoice
+      const invoice = {
+        invoiceId: `LAB-INV-${Date.now()}`,
+        type: 'lab',
         patientId: selectedPatient._id,
         patientName: selectedPatient.childName,
-        patientAge: selectedPatient.childAge,
+        childAge: selectedPatient.childAge,
         parentName: selectedPatient.parentName,
-        parentPhone: selectedPatient.parentPhone,
-        doctorName: selectedPatient.doctorName,
+        phone: selectedPatient.parentPhone,
+        ticketId: selectedPatient.ticketId,
         labTests: allLabTests,
-        totalAmount: totalAmount,
-        paidAmount: totalAmount,
+        total: totalAmount,
         paymentMethod: paymentType === 'mobile' ? 'Mobile Money' : (paymentType === 'bank' ? 'Bank Transfer' : 'Cash'),
-        mobileNumber: paymentType === 'mobile' ? mobileNumber : undefined,
-        bankLast4: paymentType === 'bank' ? bankLast4 : undefined,
-        paymentDate: new Date().toISOString()
-      })
-    });
-    
-    const saveData = await saveResponse.json();
-    
-    if (!saveData.success) {
-      toast.error('Failed to save payment to database');
+        paymentDetails: paymentType === 'mobile' ? { mobileNumber } : (paymentType === 'bank' ? { bankLast4 } : {}),
+        paymentDate: new Date().toISOString(),
+        receivedBy: user?.name,
+        status: 'paid'
+      };
+      
+      const invoices = JSON.parse(localStorage.getItem('lab_invoices') || '[]');
+      invoices.push(invoice);
+      localStorage.setItem('lab_invoices', JSON.stringify(invoices));
+      
+      setCurrentInvoice(invoice);
+      setShowPaymentModal(false);
+      setShowInvoiceModal(true);
+      
+      toast.success(`Payment of $${totalAmount} processed successfully!`);
+      
+      fetchData();
+      
+    } catch (error) {
+      console.error('Payment error:', error);
+      toast.error('Failed to process payment: ' + error.message);
+    } finally {
+      setProcessingPayment(false);
     }
-    
-    // Update localStorage consultations
-    const updatedConsultations = consultations.map(cons => {
-      if (cons.patientId === selectedPatient._id && cons.labTestsRequested) {
-        const updatedLabTests = cons.labTestsRequested.map(test => {
-          const isInSelected = allLabTests.some(lt => lt.id === test.id || lt.name === test.name);
-          if (isInSelected) {
-            return { ...test, paid: true, paidAt: new Date().toISOString() };
-          }
-          return test;
-        });
-        
-        return { 
-          ...cons, 
-          labTestsRequested: updatedLabTests,
-          labPaymentStatus: 'paid',
-          labPaidAt: new Date().toISOString(),
-          labPaidAmount: totalAmount,
-          labPaymentMethod: paymentType === 'mobile' ? 'Mobile Money' : (paymentType === 'bank' ? 'Bank Transfer' : 'Cash'),
-          status: 'completed'
-        };
-      }
-      return cons;
-    });
-    
-    localStorage.setItem('consultations', JSON.stringify(updatedConsultations));
-    
-    // Create invoice
-    const invoice = {
-      invoiceId: `LAB-INV-${Date.now()}`,
-      type: 'lab',
-      patientId: selectedPatient._id,
-      patientName: selectedPatient.childName,
-      parentName: selectedPatient.parentName,
-      phone: selectedPatient.parentPhone,
-      ticketId: selectedPatient.ticketId,
-      labTests: allLabTests,
-      total: totalAmount,
-      paymentMethod: paymentType === 'mobile' ? 'Mobile Money' : (paymentType === 'bank' ? 'Bank Transfer' : 'Cash'),
-      paymentDetails: paymentType === 'mobile' ? { mobileNumber } : (paymentType === 'bank' ? { bankLast4 } : {}),
-      paymentDate: new Date().toISOString(),
-      receivedBy: user?.name,
-      status: 'paid'
-    };
-    
-    const invoices = JSON.parse(localStorage.getItem('lab_invoices') || '[]');
-    invoices.push(invoice);
-    localStorage.setItem('lab_invoices', JSON.stringify(invoices));
-    
-    setCurrentInvoice(invoice);
-    setShowPaymentModal(false);
-    setShowInvoiceModal(true);
-    
-    toast.success(`Payment of $${totalAmount} processed successfully!`);
-    
-    fetchData();
-    
-  } catch (error) {
-    console.error('Payment error:', error);
-    toast.error('Failed to process payment: ' + error.message);
-  } finally {
-    setProcessingPayment(false);
-  }
-};
+  };
 
   const handlePrintInvoice = () => {
     const printWindow = window.open('', '_blank');
+    const logoBase64 = logo;
+    const currentDate = new Date().toLocaleDateString('en-GB');
+    const refNo = `#${Math.floor(Math.random() * 100000)}`;
+    
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>REYS CLINIC - Lab Test Invoice</title>
+          <title>REYS CLINIC - Lab Test Payment Receipt</title>
           <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Times New Roman', Arial, sans-serif; background: #fff; padding: 40px; }
-            .invoice { max-width: 800px; margin: 0 auto; border: 1px solid #ddd; background: #fff; }
-            .header { text-align: center; padding: 30px; border-bottom: 2px solid #7c3aed; }
-            .logo-img { max-width: 150px; height: auto; margin-bottom: 10px; }
-            .clinic-name { font-size: 24px; font-weight: bold; color: #7c3aed; margin-bottom: 5px; }
-            .clinic-address { font-size: 12px; color: #666; }
-            .info-section { padding: 20px 30px; background: #f9f9f9; }
-            .info-row { display: flex; margin-bottom: 8px; }
-            .info-label { width: 150px; font-weight: bold; }
-            .info-value { flex: 1; }
-            .divider { border-top: 1px dashed #999; margin: 15px 0; }
-            .test-section { padding: 20px 30px; }
-            .test-title { font-size: 16px; font-weight: bold; color: #7c3aed; margin-bottom: 15px; border-left: 4px solid #7c3aed; padding-left: 10px; }
-            .test-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-            .test-table th, .test-table td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-            .test-table th { background: #f5f5f5; font-weight: bold; }
-            .footer { text-align: center; padding: 20px; font-size: 11px; color: #999; border-top: 1px solid #ddd; }
-            .total { font-size: 18px; font-weight: bold; color: #7c3aed; margin-top: 15px; padding-top: 10px; border-top: 2px solid #7c3aed; text-align: right; }
+            body { 
+              font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
+              background: #fff;
+              padding: 0;
+              margin: 0;
+            }
+            .receipt {
+              max-width: 100%;
+              width: 100%;
+              background: white;
+              margin: 0;
+              padding: 0;
+            }
+            .receipt-content {
+              padding: 20px 25px;
+            }
+            .header {
+              text-align: center;
+              padding-bottom: 12px;
+              margin-bottom: 15px;
+            }
+            .logo-img {
+              max-width: 180px;
+              height: auto;
+              margin-bottom: 8px;
+            }
+            .clinic-address {
+              font-size: 12px;
+              font-weight: bold;
+              color: #333;
+              margin-top: 5px;
+            }
+            .contact-info {
+              font-size: 12px;
+              font-weight: bold;
+              color: #333;
+            }
+            
+            .top-section {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 20px;
+              border-bottom: 1px solid #ccc;
+              padding-bottom: 12px;
+            }
+            .receipt-title {
+              font-size: 22px;
+              font-weight: bold;
+              letter-spacing: 2px;
+              color: #7c3aed;
+            }
+            .qr-placeholder {
+              width: 50px;
+              height: 50px;
+              background: linear-gradient(45deg, #333 25%, transparent 25%), 
+                          linear-gradient(-45deg, #333 25%, transparent 25%);
+              background-size: 8px 8px;
+              background-color: #f0f0f0;
+              border: 1px solid #999;
+            }
+            
+            .info-bordered {
+              border: 1px solid #ccc;
+              margin-bottom: 15px;
+            }
+            .info-row-double {
+              display: flex;
+              justify-content: space-between;
+              padding: 8px 12px;
+              border-bottom: 1px solid #eee;
+            }
+            .info-row-double:last-child {
+              border-bottom: none;
+            }
+            .info-label-double {
+              font-weight: bold;
+              font-size: 12px;
+            }
+            .info-value-double {
+              font-size: 12px;
+            }
+            
+            .patient-box {
+              border: 1px solid #ccc;
+              margin-bottom: 15px;
+            }
+            .patient-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 8px 12px;
+              border-bottom: 1px solid #eee;
+            }
+            .patient-row:last-child {
+              border-bottom: none;
+            }
+            .patient-label {
+              font-weight: bold;
+              font-size: 12px;
+            }
+            .patient-value {
+              font-size: 12px;
+            }
+            
+            .tests-list {
+              margin-top: 10px;
+              padding: 8px;
+              background: #f9f9f9;
+              border-radius: 4px;
+            }
+            .test-item {
+              display: flex;
+              justify-content: space-between;
+              font-size: 11px;
+              padding: 4px 0;
+              border-bottom: 1px dotted #ddd;
+            }
+            .test-item:last-child {
+              border-bottom: none;
+            }
+            .test-name {
+              font-weight: normal;
+            }
+            .test-price {
+              font-weight: bold;
+              color: #2e7d32;
+            }
+            
+            .amount-section {
+              display: flex;
+              justify-content: flex-end;
+              margin-bottom: 20px;
+            }
+            .amount-table {
+              width: 220px;
+              border-collapse: collapse;
+            }
+            .amount-table td {
+              padding: 6px 8px;
+              font-size: 13px;
+            }
+            .amount-table td:first-child {
+              font-weight: bold;
+            }
+            .amount-table td:last-child {
+              text-align: right;
+            }
+            .total-row td {
+              font-weight: bold;
+              font-size: 15px;
+              border-top: 2px solid #333;
+              padding-top: 8px;
+            }
+            
+            .signature {
+              margin-top: 25px;
+              text-align: center;
+              font-size: 12px;
+              padding-top: 15px;
+              border-top: 1px solid #ccc;
+            }
+            
+            .footer {
+              margin-top: 20px;
+              padding: 10px;
+              text-align: center;
+              font-size: 10px;
+              color: #666;
+              border-top: 1px solid #ccc;
+            }
+            
+            .lab-note {
+              background: #f3e8ff;
+              padding: 12px;
+              border-radius: 8px;
+              margin-top: 15px;
+              text-align: center;
+            }
+            
+            @media print {
+              body { padding: 0; margin: 0; }
+              .receipt { box-shadow: none; margin: 0; }
+              .receipt-content { padding: 15px 20px; }
+            }
           </style>
         </head>
         <body>
-          <div class="invoice">
-            <div class="header">
-              <div class="clinic-name">REYS CLINIC</div>
-              <div class="clinic-address">Wadad Sodonka, NBC, Albarako, Mogadishu, Somalia</div>
-              <div>Laboratory Services Payment Receipt</div>
-            </div>
-            <div class="info-section">
-              <div class="info-row"><div class="info-label">Invoice No:</div><div class="info-value">${currentInvoice.invoiceId}</div><div class="info-label" style="margin-left: 30px;">Date:</div><div class="info-value">${new Date().toLocaleDateString()}</div></div>
-              <div class="info-row"><div class="info-label">Patient Name:</div><div class="info-value">${currentInvoice.patientName}</div><div class="info-label" style="margin-left: 30px;">Age:</div><div class="info-value">${currentInvoice.patientAge || selectedPatient?.childAge || 'N/A'} years</div></div>
-              <div class="info-row"><div class="info-label">Parent/Guardian:</div><div class="info-value">${currentInvoice.parentName}</div><div class="info-label" style="margin-left: 30px;">Phone:</div><div class="info-value">${currentInvoice.phone}</div></div>
-              <div class="info-row"><div class="info-label">Ticket ID:</div><div class="info-value">${currentInvoice.ticketId}</div></div>
-            </div>
-            <div class="test-section">
-              <div class="test-title">LAB TESTS PAID</div>
-              <table class="test-table">
-                <thead>
-                  <tr><th>Test Name</th><th>Category</th><th>Price</th></tr>
-                </thead>
-                <tbody>
-                  ${currentInvoice.labTests.map(test => `
-                    <tr>
-                      <td>🧪 ${test.name}</td>
-                      <td>${test.category || 'General'}</td>
-                      <td>$${test.price || 0}</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-              <div class="total">Total Paid: $${currentInvoice.total}</div>
-              <div class="info-row" style="margin-top: 20px;"><div class="info-label">Payment Method:</div><div class="info-value">${currentInvoice.paymentMethod}</div></div>
-              ${currentInvoice.paymentMethod === 'Mobile Money' ? `<div class="info-row"><div class="info-label">Mobile Number:</div><div class="info-value">${currentInvoice.paymentDetails?.mobileNumber}</div></div>` : ''}
-              ${currentInvoice.paymentMethod === 'Bank Transfer' ? `<div class="info-row"><div class="info-label">Card Last 4:</div><div class="info-value">**** ${currentInvoice.paymentDetails?.bankLast4}</div></div>` : ''}
-              <div class="info-row"><div class="info-label">Received By:</div><div class="info-value">${currentInvoice.receivedBy}</div></div>
-            </div>
-            <div class="footer">
-              <p>Thank you for choosing REYS CLINIC Laboratory Services</p>
-              <p>Lab tests have been sent to the laboratory for processing</p>
-              <p>-----------------------------------END OF RECEIPT------------------------------------------</p>
+          <div class="receipt">
+            <div class="receipt-content">
+              <div class="header">
+                <img src="${logoBase64}" alt="REYS CLINIC Logo" class="logo-img" />
+                <div class="clinic-address">Wadada Sodonka, NBC, Albarako, Hodan, Mogadishu, Somalia</div>
+                <div class="contact-info">Tel: 612674455 | 611477201</div>
+              </div>
+              
+              <div class="top-section">
+                <div class="receipt-title">LABORATORY RECEIPT</div>
+                <div class="qr-placeholder"></div>
+              </div>
+              
+              <div class="info-bordered">
+                <div class="info-row-double">
+                  <span class="info-label-double">RECEIPT NO:</span>
+                  <span class="info-value-double">${currentInvoice.invoiceId}</span>
+                </div>
+                <div class="info-row-double">
+                  <span class="info-label-double">PRINT DATE:</span>
+                  <span class="info-value-double">${currentDate}</span>
+                </div>
+                <div class="info-row-double">
+                  <span class="info-label-double">PAYMENT DATE:</span>
+                  <span class="info-value-double">${new Date(currentInvoice.paymentDate).toLocaleDateString('en-GB')}</span>
+                </div>
+              </div>
+              
+              <div class="patient-box">
+                <div class="patient-row">
+                  <span class="patient-label">PATIENT ID:</span>
+                  <span class="patient-value">${currentInvoice.ticketId || `PAT-${currentInvoice.patientId?.slice(-6) || Date.now()}`}</span>
+                </div>
+                <div class="patient-row">
+                  <span class="patient-label">PATIENT NAME:</span>
+                  <span class="patient-value">${currentInvoice.patientName}</span>
+                </div>
+                <div class="patient-row">
+                  <span class="patient-label">AGE:</span>
+                  <span class="patient-value">${currentInvoice.childAge || 'N/A'} years</span>
+                </div>
+                <div class="patient-row">
+                  <span class="patient-label">PARENT/GUARDIAN:</span>
+                  <span class="patient-value">${currentInvoice.parentName}</span>
+                </div>
+                <div class="patient-row">
+                  <span class="patient-label">PHONE:</span>
+                  <span class="patient-value">${currentInvoice.phone}</span>
+                </div>
+              </div>
+              
+              <div class="tests-list">
+                <div style="font-weight: bold; margin-bottom: 8px; font-size: 12px;">LAB TESTS PAID:</div>
+                ${currentInvoice.labTests.map(test => `
+                  <div class="test-item">
+                    <span class="test-name">🧪 ${test.name}</span>
+                    <span class="test-price">$${test.price || 0}</span>
+                  </div>
+                `).join('')}
+              </div>
+              
+              <div class="amount-section">
+                <table class="amount-table">
+                  <tr>
+                    <td>SUBTOTAL:</td>
+                    <td>$${currentInvoice.total.toFixed(2)}</td>
+                  </tr>
+                  <tr>
+                    <td>DISCOUNT:</td>
+                    <td>$0.00</td>
+                  </tr>
+                  <tr class="total-row">
+                    <td>TOTAL PAID:</td>
+                    <td>$${currentInvoice.total.toFixed(2)}</td>
+                  </tr>
+                </table>
+              </div>
+             
+              
+              <div class="signature">
+                <p style="margin-top: 10px;">___________________________</p>
+                <p style="font-size: 10px;">Authorized Signature</p>
+              </div>
+              
+              <div class="footer">
+                <p>** THIS IS A COMPUTER GENERATED RECEIPT **</p>
+                <p>Thank you for choosing REYS CLINIC Laboratory Services</p>
+                <p>-----------------------------------END OF RECEIPT------------------------------------------</p>
+              </div>
             </div>
           </div>
         </body>
@@ -370,17 +592,17 @@ const PatientCheckout = () => {
   const handleDownloadInvoice = () => {
     const invoiceData = currentInvoice;
     const csvContent = "data:text/csv;charset=utf-8," 
-      + "Invoice #,Patient Name,Parent Name,Phone,Total,Payment Method,Date\n"
-      + `${invoiceData.invoiceId},${invoiceData.patientName},${invoiceData.parentName},${invoiceData.phone},$${invoiceData.total.toFixed(2)},${invoiceData.paymentMethod},${new Date().toLocaleDateString()}`;
+      + "Receipt #,Patient Name,Parent Name,Phone,Total,Payment Method,Date\n"
+      + `${invoiceData.invoiceId},${invoiceData.patientName},${invoiceData.parentName},${invoiceData.phone},$${invoiceData.total.toFixed(2)},${invoiceData.paymentMethod},${new Date(invoiceData.paymentDate).toLocaleDateString()}`;
     
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `lab_invoice_${invoiceData.ticketId}.csv`);
+    link.setAttribute("download", `lab_receipt_${invoiceData.ticketId}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast.success('Invoice downloaded');
+    toast.success('Receipt downloaded');
   };
 
   const filteredPatients = patients.filter(patient =>
@@ -673,22 +895,21 @@ const PatientCheckout = () => {
             <div className="p-6">
               <div className="text-center mb-6">
                 <div className="flex justify-center mb-3">
-                  <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center">
-                    <FlaskConical className="w-8 h-8 text-white" />
-                  </div>
+                  <img src={logo} alt="REYS CLINIC" className="h-16 w-auto object-contain" />
                 </div>
                 <h2 className="text-2xl font-bold text-gray-900">REYS CLINIC</h2>
-                <p className="text-gray-500">Wadad Sodonka, NBC, Albarako, Mogadishu, Somalia</p>
-                <p className="text-gray-500">Laboratory Services</p>
-                <h3 className="text-xl font-bold mt-4">PAYMENT RECEIPT</h3>
+                <p className="text-gray-500">Wadada Sodonka, NBC, Albarako, Mogadishu, Somalia</p>
+                <p className="text-gray-500">Tel: 612674455 | 611477201</p>
+                <h3 className="text-xl font-bold mt-4 text-purple-600">LABORATORY PAYMENT RECEIPT</h3>
               </div>
               
               <div className="bg-gray-50 rounded-xl p-4 mb-6">
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div><span className="text-gray-500">Receipt #:</span> <strong>{currentInvoice.invoiceId}</strong></div>
-                  <div><span className="text-gray-500">Date:</span> {new Date().toLocaleDateString()}</div>
-                  <div><span className="text-gray-500">Patient:</span> {currentInvoice.patientName}</div>
-                  <div><span className="text-gray-500">Parent:</span> {currentInvoice.parentName}</div>
+                  <div><span className="text-gray-500">Date:</span> {new Date(currentInvoice.paymentDate).toLocaleDateString()}</div>
+                  <div><span className="text-gray-500">Patient Name:</span> {currentInvoice.patientName}</div>
+                  <div><span className="text-gray-500">Age:</span> {currentInvoice.childAge || 'N/A'} years</div>
+                  <div><span className="text-gray-500">Parent/Guardian:</span> {currentInvoice.parentName}</div>
                   <div><span className="text-gray-500">Phone:</span> {currentInvoice.phone}</div>
                   <div><span className="text-gray-500">Ticket ID:</span> {currentInvoice.ticketId}</div>
                 </div>
@@ -702,7 +923,7 @@ const PatientCheckout = () => {
                 <tbody>
                   {currentInvoice.labTests.map((test, idx) => (
                     <tr key={idx} className="border-b">
-                      <td className="px-4 py-2 text-sm">{test.name}</td>
+                      <td className="px-4 py-2 text-sm">🧪 {test.name}</td>
                       <td className="px-4 py-2 text-sm">{test.category || 'General'}</td>
                       <td className="px-4 py-2 text-right text-sm">${test.price || 0}</td>
                     </tr>
@@ -715,7 +936,7 @@ const PatientCheckout = () => {
                 <p><strong>Payment Method:</strong> {currentInvoice.paymentMethod}</p>
                 {currentInvoice.paymentMethod === 'Mobile Money' && <p><strong>Mobile Number:</strong> {currentInvoice.paymentDetails?.mobileNumber}</p>}
                 {currentInvoice.paymentMethod === 'Bank Transfer' && <p><strong>Card Last 4:</strong> **** {currentInvoice.paymentDetails?.bankLast4}</p>}
-                <p><strong>Received By:</strong> {currentInvoice.receivedBy}</p>
+                <p><strong>Received By:</strong> {currentInvoice.receivedBy || 'Receptionist'}</p>
               </div>
               
               <div className="bg-purple-50 rounded-xl p-4 mt-4">
@@ -746,4 +967,4 @@ const PatientCheckout = () => {
 
 export default PatientCheckout;
 
-// const confirmPayment = async () => {
+// ✅ LABORATORY INSTRUCTION

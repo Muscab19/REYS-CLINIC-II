@@ -293,72 +293,322 @@ const Inpatient = () => {
   };
 
   const handlePrintInvoice = (patient) => {
-    const printWindow = window.open('', '_blank');
-    const patientName = getChildName(patient);
-    const patientIdDisplay = getPatientId(patient);
-    
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>REYS CLINIC - Inpatient Invoice</title>
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Times New Roman', Arial, sans-serif; background: #fff; padding: 40px; }
-            .invoice { max-width: 800px; margin: 0 auto; border: 1px solid #ddd; background: #fff; }
-            .header { text-align: center; padding: 30px; border-bottom: 2px solid #D01A2B; }
-            .logo-img { max-width: 150px; height: auto; margin-bottom: 10px; }
-            .clinic-name { font-size: 24px; font-weight: bold; color: #D01A2B; margin-bottom: 5px; }
-            .clinic-address { font-size: 12px; color: #666; }
-            .content { padding: 30px; }
-            .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #eee; }
-            .section-title { font-size: 16px; font-weight: bold; color: #D01A2B; margin: 20px 0 10px 0; padding-bottom: 5px; border-bottom: 2px solid #D01A2B; }
-            .total { font-size: 18px; font-weight: bold; color: #D01A2B; margin-top: 15px; padding-top: 10px; border-top: 2px solid #D01A2B; }
-            .footer { text-align: center; padding: 20px; font-size: 11px; color: #999; border-top: 1px solid #ddd; }
-            .status-paid { color: #16a34a; font-weight: bold; }
-            .status-pending { color: #dc2626; font-weight: bold; }
-          </style>
-        </head>
-        <body>
-          <div class="invoice">
+  const printWindow = window.open('', '_blank');
+  const logoBase64 = logo;
+  const currentDate = new Date().toLocaleDateString('en-GB');
+  const patientName = getChildName(patient);
+  const patientIdDisplay = getPatientId(patient);
+  const refNo = `INV-${patient.inpatientId || patient._id?.slice(-8) || Date.now()}`;
+  
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>REYS CLINIC - Inpatient Invoice</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { 
+            font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
+            background: #fff;
+            padding: 0;
+            margin: 0;
+          }
+          .invoice {
+            max-width: 100%;
+            width: 100%;
+            background: white;
+            margin: 0;
+            padding: 0;
+          }
+          .invoice-content {
+            padding: 20px 25px;
+          }
+          .header {
+            text-align: center;
+            padding-bottom: 12px;
+            margin-bottom: 15px;
+          }
+          .logo-img {
+            max-width: 180px;
+            height: auto;
+            margin-bottom: 8px;
+          }
+          .clinic-address {
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+            margin-top: 5px;
+          }
+          .contact-info {
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+          }
+          
+          .top-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 12px;
+          }
+          .invoice-title {
+            font-size: 22px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: #D01A2B;
+          }
+          .qr-placeholder {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(45deg, #333 25%, transparent 25%), 
+                        linear-gradient(-45deg, #333 25%, transparent 25%);
+            background-size: 8px 8px;
+            background-color: #f0f0f0;
+            border: 1px solid #999;
+          }
+          
+          .info-bordered {
+            border: 1px solid #ccc;
+            margin-bottom: 15px;
+          }
+          .info-row-double {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid #eee;
+          }
+          .info-row-double:last-child {
+            border-bottom: none;
+          }
+          .info-label-double {
+            font-weight: bold;
+            font-size: 12px;
+          }
+          .info-value-double {
+            font-size: 12px;
+          }
+          
+          .patient-box {
+            border: 1px solid #ccc;
+            margin-bottom: 15px;
+          }
+          .patient-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid #eee;
+          }
+          .patient-row:last-child {
+            border-bottom: none;
+          }
+          .patient-label {
+            font-weight: bold;
+            font-size: 12px;
+          }
+          .patient-value {
+            font-size: 12px;
+          }
+          
+          .stay-details {
+            border: 1px solid #ccc;
+            margin-bottom: 15px;
+          }
+          .stay-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid #eee;
+          }
+          .stay-row:last-child {
+            border-bottom: none;
+          }
+          .stay-label {
+            font-weight: bold;
+            font-size: 12px;
+          }
+          .stay-value {
+            font-size: 12px;
+          }
+          
+          .amount-section {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 20px;
+          }
+          .amount-table {
+            width: 220px;
+            border-collapse: collapse;
+          }
+          .amount-table td {
+            padding: 6px 8px;
+            font-size: 13px;
+          }
+          .amount-table td:first-child {
+            font-weight: bold;
+          }
+          .amount-table td:last-child {
+            text-align: right;
+          }
+          .total-row td {
+            font-weight: bold;
+            font-size: 15px;
+            border-top: 2px solid #333;
+            padding-top: 8px;
+          }
+          
+          .status-paid {
+            color: #16a34a;
+            font-weight: bold;
+          }
+          .status-pending {
+            color: #dc2626;
+            font-weight: bold;
+          }
+          
+          .signature {
+            margin-top: 25px;
+            text-align: center;
+            font-size: 12px;
+            padding-top: 15px;
+            border-top: 1px solid #ccc;
+          }
+          
+          .footer {
+            margin-top: 20px;
+            padding: 10px;
+            text-align: center;
+            font-size: 10px;
+            color: #666;
+            border-top: 1px solid #ccc;
+          }
+          
+          @media print {
+            body { padding: 0; margin: 0; }
+            .invoice { box-shadow: none; margin: 0; }
+            .invoice-content { padding: 15px 20px; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="invoice">
+          <div class="invoice-content">
             <div class="header">
-              <div class="clinic-name">REYS CLINIC</div>
-              <div class="clinic-address">Wadad Sodonka, NBC, Albarako, Mogadishu, Somalia</div>
-              <div>Pediatric Specialist</div>
-              <h3 style="margin-top: 10px;">INPATIENT INVOICE</h3>
+              <img src="${logoBase64}" alt="REYS CLINIC Logo" class="logo-img" />
+              <div class="clinic-address">Wadada Sodonka, NBC, Albarako, Hodan, Mogadishu, Somalia</div>
+              <div class="contact-info">Tel: 612674455 | 611477201</div>
             </div>
-            <div class="content">
-              <div class="info-row"><strong>Invoice No:</strong> <span>${patient.inpatientId || patient._id}</span></div>
-              <div class="info-row"><strong>Patient Name:</strong> <span>${patientName}</span></div>
-              <div class="info-row"><strong>Patient ID:</strong> <span>${patientIdDisplay}</span></div>
-              <div class="info-row"><strong>Room:</strong> <span>${patient.roomNumber || 'N/A'}</span></div>
-              <div class="info-row"><strong>Bed:</strong> <span>${patient.bedNumber || 'N/A'}</span></div>
-              <div class="info-row"><strong>Admission Date:</strong> <span>${patient.admissionDate ? new Date(patient.admissionDate).toLocaleString() : 'N/A'}</span></div>
-              ${patient.dischargeDate ? `<div class="info-row"><strong>Discharge Date:</strong> <span>${new Date(patient.dischargeDate).toLocaleString()}</span></div>` : ''}
-              <div class="info-row"><strong>Nights Stayed:</strong> <span>${patient.nightsCount || 0} nights</span></div>
-              <div class="info-row"><strong>Nightly Rate:</strong> <span>$${patient.nightlyRate || 0}</span></div>
-              <div class="section-title">Payment Details</div>
-              <div class="info-row"><strong>Total Amount:</strong> <span>$${patient.totalAmount || 0}</span></div>
-              <div class="info-row"><strong>Amount Paid:</strong> <span>$${patient.paidAmount || 0}</span></div>
-              <div class="info-row"><strong>Balance:</strong> <span>$${(patient.totalAmount || 0) - (patient.paidAmount || 0)}</span></div>
-              <div class="info-row"><strong>Payment Status:</strong> <span class="${patient.paymentStatus === 'paid' ? 'status-paid' : 'status-pending'}">${patient.paymentStatus === 'paid' ? 'PAID' : 'PENDING'}</span></div>
-              ${patient.paymentMethod ? `<div class="info-row"><strong>Payment Method:</strong> <span>${patient.paymentMethod === 'mobile' ? 'Mobile Money' : 'Bank Transfer'}</span></div>` : ''}
-              ${patient.mobileNumber ? `<div class="info-row"><strong>Mobile Number:</strong> <span>${patient.mobileNumber}</span></div>` : ''}
-              ${patient.bankLast4 ? `<div class="info-row"><strong>Bank Card:</strong> <span>**** **** **** ${patient.bankLast4}</span></div>` : ''}
-              <div class="total">Total Paid: $${patient.paidAmount || 0}</div>
+            
+            <div class="top-section">
+              <div class="invoice-title">INPATIENT INVOICE</div>
+              <div class="qr-placeholder"></div>
             </div>
+            
+            <div class="info-bordered">
+              <div class="info-row-double">
+                <span class="info-label-double">INVOICE NO:</span>
+                <span class="info-value-double">${refNo}</span>
+              </div>
+              <div class="info-row-double">
+                <span class="info-label-double">PRINT DATE:</span>
+                <span class="info-value-double">${currentDate}</span>
+              </div>
+              <div class="info-row-double">
+                <span class="info-label-double">ADMISSION DATE:</span>
+                <span class="info-value-double">${patient.admissionDate ? new Date(patient.admissionDate).toLocaleString() : 'N/A'}</span>
+              </div>
+              ${patient.dischargeDate ? `
+              <div class="info-row-double">
+                <span class="info-label-double">DISCHARGE DATE:</span>
+                <span class="info-value-double">${new Date(patient.dischargeDate).toLocaleString()}</span>
+              </div>
+              ` : ''}
+            </div>
+            
+            <div class="patient-box">
+              <div class="patient-row">
+                <span class="patient-label">PATIENT ID:</span>
+                <span class="patient-value">${patientIdDisplay}</span>
+              </div>
+              <div class="patient-row">
+                <span class="patient-label">PATIENT NAME:</span>
+                <span class="patient-value">${patientName}</span>
+              </div>
+              <div class="patient-row">
+                <span class="patient-label">PARENT/GUARDIAN:</span>
+                <span class="patient-value">${patient.parentName || 'N/A'}</span>
+              </div>
+              <div class="patient-row">
+                <span class="patient-label">PHONE:</span>
+                <span class="patient-value">${patient.parentPhone || 'N/A'}</span>
+              </div>
+            </div>
+            
+            <div class="stay-details">
+              <div class="stay-row">
+                <span class="stay-label">ROOM NUMBER:</span>
+                <span class="stay-value">${patient.roomNumber || 'N/A'}</span>
+              </div>
+              <div class="stay-row">
+                <span class="stay-label">BED NUMBER:</span>
+                <span class="stay-value">${patient.bedNumber || 'N/A'}</span>
+              </div>
+              <div class="stay-row">
+                <span class="stay-label">NIGHTS STAYED:</span>
+                <span class="stay-value">${patient.nightsCount || 0} nights</span>
+              </div>
+              <div class="stay-row">
+                <span class="stay-label">NIGHTLY RATE:</span>
+                <span class="stay-value">$${patient.nightlyRate || 0}</span>
+              </div>
+            </div>
+            
+            <div class="amount-section">
+              <table class="amount-table">
+                <tr>
+                  <td>SUBTOTAL:</td>
+                  <td>$${patient.totalAmount || 0}</td>
+                </tr>
+                <tr>
+                  <td>DISCOUNT:</td>
+                  <td>$${patient.discount || 0}</td>
+                </tr>
+                <tr class="total-row">
+                  <td>TOTAL AMOUNT:</td>
+                  <td>$${patient.totalAmount || 0}</td>
+                </tr>
+                <tr>
+                  <td>AMOUNT PAID:</td>
+                  <td>$${patient.paidAmount || 0}</td>
+                </tr>
+                <tr class="total-row">
+                  <td>BALANCE:</td>
+                  <td>$${(patient.totalAmount || 0) - (patient.paidAmount || 0)}</td>
+                </tr>
+              </table>
+            </div>
+            
+            
+            <div class="signature">
+              <p>Processed By: ${user?.name || 'Receptionist'}</p>
+              <p style="margin-top: 10px;">___________________________</p>
+              <p style="font-size: 10px;">Authorized Signature</p>
+            </div>
+            
             <div class="footer">
+              <p>** THIS IS A COMPUTER GENERATED INVOICE **</p>
               <p>Thank you for choosing REYS CLINIC</p>
-              <p>Processed By: ${user?.name || 'Reception'}</p>
               <p>-----------------------------------END OF INVOICE------------------------------------------</p>
             </div>
           </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
-  };
+        </div>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.print();
+};
 
   const getStatusBadge = (status) => {
     const config = {
