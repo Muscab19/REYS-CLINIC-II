@@ -30,6 +30,7 @@ import InpatientPage from './Reception/Pages/InpatientPage';
 import RegisterPatient from './Reception/Pages/RegisterPatient';
 import PatientCheckout from './Reception/Pages/PatientCheckout';
 import CompletedCheckouts from './Reception/Pages/CompletedCheckouts';
+import PatientHistory from './Reception/Pages/PatientHistory';
 
 // Pharmacy Pages
 import PharmacyPrescriptions from './Pharmacy/Pages/PharmacyPrescriptions';
@@ -139,6 +140,12 @@ function App() {
           <Route path="/checkouts" element={
             <ProtectedRoute allowedRoles={['reception']}>
               <CompletedCheckouts />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/patients" element={
+            <ProtectedRoute allowedRoles={['reception']}>
+              <PatientHistory />
             </ProtectedRoute>
           } />
 

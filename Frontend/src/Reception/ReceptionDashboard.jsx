@@ -335,7 +335,8 @@ const ReceptionDashboard = () => {
     { id: 'overview', label: 'Overview', icon: <Home className="w-5 h-5" />, path: '/reception-dashboard' },
     { id: 'appointments', label: 'Appointments', icon: <Calendar className="w-5 h-5" />, path: '/appointments' },
     { id: 'register-patient', label: 'Register Patient', icon: <UserPlus className="w-5 h-5" />, path: '/register-patient' },
-    { id: 'Inpatient', label: 'Inpatient', icon: <Bed className="w-5 h-5" />, path: '/inpatients' },
+    { id: 'patients-history', label: 'Patients History', icon: <Users className="w-5 h-5" />, path: '/patients' },
+    { id: 'inpatient', label: 'Inpatient', icon: <Bed className="w-5 h-5" />, path: '/inpatients' },
     { id: 'checkout', label: 'Patient Checkout', icon: <DollarSign className="w-5 h-5" />, path: '/checkout' },
   ];
 

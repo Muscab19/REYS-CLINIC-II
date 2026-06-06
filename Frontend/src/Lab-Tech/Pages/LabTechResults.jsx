@@ -10,7 +10,7 @@ import {
   Stethoscope, Syringe, Droplet, Brain, Bone,
   FlaskConical, Scissors, Thermometer, HeartPulse,
   Filter, Send, MessageCircle, Phone, Mail, MapPin,
-  Award, Star, Flag, Building2
+  Award, Star, Building2
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -333,396 +333,763 @@ const LabTechResults = () => {
     return d.toLocaleDateString('en-GB');
   };
 
-  const printProfessionalReport = (patientGroup) => {
-  const printWindow = window.open('', '_blank');
-  const labRef = generateLabRef();
-  const reportDate = formatDateForReport(new Date());
-  const examinedDate = patientGroup.tests[0]?.completedAt ? formatDateForReport(patientGroup.tests[0].completedAt) : reportDate;
-  
-  // Get the doctor name from the "Referred by" field (first test's requestedBy)
-  const referredDoctor = patientGroup.tests[0]?.requestedBy || 'N/A';
-  
-  // Group tests by category
-  const categorizedTests = {};
-  patientGroup.tests.forEach(test => {
-    let category = 'LABORATORY TESTS';
-    if (test.testName.toLowerCase().includes('cbc') || test.testName.toLowerCase().includes('blood count')) {
-      category = 'HAEMATOLOGY REPORT';
-    } else if (test.testName.toLowerCase().includes('stool') || test.testName.toLowerCase().includes('stool exam')) {
-      category = 'STOOL LETTER REPORT';
-    } else if (test.testName.toLowerCase().includes('crea') || test.testName.toLowerCase().includes('urea') || 
-               test.testName.toLowerCase().includes('hba1c') || test.testName.toLowerCase().includes('lipid') ||
-               test.testName.toLowerCase().includes('calcium') || test.testName.toLowerCase().includes('hdl') ||
-               test.testName.toLowerCase().includes('ldl') || test.testName.toLowerCase().includes('iron')) {
-      category = 'BIOCHEMISTRY REPORT';
+  // Print function for a single test (used in expanded view and modal)
+  const printSingleTest = (test) => {
+    const printWindow = window.open('', '_blank');
+    const labRef = generateLabRef();
+    const reportDate = formatDateForReport(new Date());
+    const examinedDate = test.completedAt ? formatDateForReport(test.completedAt) : reportDate;
+    
+    // Get the appropriate requester name based on source
+    const isFromReception = test.requestedBy?.includes('Reception') || !test.requestedBy?.startsWith('Dr.');
+    const requesterDisplay = isFromReception ? '' : test.requestedBy;
+    
+    let resultValue = 'N/A';
+    let isAbnormal = false;
+    let flag = '';
+    
+    if (test.resultType === 'multi' && test.parameters && test.parameters.length > 0) {
+      // For multi-parameter tests, we'll show all parameters
+      resultValue = 'See detailed results below';
     } else {
-      category = test.testName;
+      resultValue = Object.values(test.results || {})[0] || 'N/A';
+      isAbnormal = test.normalRange && resultValue !== 'N/A' && !isValueInRange(resultValue, test.normalRange);
+      if (isAbnormal) {
+        const numValue = parseFloat(resultValue);
+        const rangeParts = test.normalRange?.split('-');
+        if (rangeParts && rangeParts.length === 2) {
+          flag = numValue < parseFloat(rangeParts[0]) ? 'L' : 'H';
+        } else {
+          flag = 'Abnormal';
+        }
+      }
     }
     
-    if (!categorizedTests[category]) {
-      categorizedTests[category] = [];
-    }
-    categorizedTests[category].push(test);
-  });
-  
-  printWindow.document.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>REYS CLINIC - Lab Report - ${patientGroup.patientName}</title>
-        <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-          body {
-            font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
-            background: #e6e9ef;
-            padding: 0;
-            margin: 0;
-            font-size: 14px;
-            line-height: 1.5;
-          }
-          .report {
-            max-width: 210mm;
-            min-height: 297mm;
-            margin: 0 auto;
-            background: white;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-          }
-          .report-content {
-            padding: 15mm 12mm;
-            background: white;
-          }
-          /* Header Section */
-          .header {
-            text-align: center;
-            border-bottom: 2px solid #c0392b;
-            padding-bottom: 15px;
-            margin-bottom: 20px;
-          }
-          .logo-slogan-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 5px;
-          }
-          .logo-img {
-            max-width: 100px;
-            height: auto;
-            margin-bottom: 5px;
-          }
-          .clinic-slogan {
-            font-size: 13px;
-            font-style: italic;
-            color: #555;
-            letter-spacing: 1px;
-          }
-          .doctor-name {
-            font-size: 14px;
-            font-weight: bold;
-            color: #333;
-            margin-top: 8px;
-            margin-bottom: 5px;
-          }
-          .clinic-address {
-            font-size: 11px;
-            color: #555;
-            margin-top: 8px;
-          }
-          .contact-info {
-            font-size: 11px;
-            color: #555;
-            margin-top: 3px;
-          }
-          /* Info Grid */
-          .info-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            margin: 15px 0;
-            padding: 12px;
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
-          }
-          .info-row {
-            display: flex;
-            align-items: baseline;
-            font-size: 12px;
-          }
-          .info-label {
-            font-weight: bold;
-            width: 110px;
-            min-width: 110px;
-            color: #333;
-          }
-          .info-value {
-            color: #212529;
-            font-weight: normal;
-          }
-          /* Section Title */
-          .section-title {
-            font-size: 14px;
-            font-weight: bold;
-            text-transform: uppercase;
-            padding: 8px 12px;
-            background: #f1f3f5;
-            border-bottom: 1px solid #dee2e6;
-            color: #c0392b;
-            margin-top: 15px;
-            margin-bottom: 8px;
-          }
-          /* Test Results Table */
-          .test-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 8px 0;
-          }
-          .test-table th {
-            background: #e9ecef;
-            padding: 8px 10px;
-            text-align: left;
-            font-weight: bold;
-            font-size: 11px;
-            border-bottom: 1px solid #dee2e6;
-            text-transform: uppercase;
-          }
-          .test-table td {
-            padding: 6px 10px;
-            border-bottom: 1px solid #f1f3f5;
-            font-size: 12px;
-          }
-          .test-table tr:last-child td {
-            border-bottom: none;
-          }
-          .parameter-name {
-            font-weight: 500;
-            width: 35%;
-          }
-          .result-value {
-            width: 25%;
-            font-weight: bold;
-            color: #000;
-          }
-          .reference-range {
-            width: 25%;
-            color: #333;
-          }
-          .flag {
-            width: 15%;
-          }
-          .flag-abnormal {
-            font-weight: bold;
-          }
-          /* Footer */
-          .footer {
-            margin-top: 20px;
-            padding: 12px;
-            border-top: 1px solid #dee2e6;
-            text-align: center;
-            font-size: 10px;
-            color: #666;
-          }
-          .signature-area {
-            margin-top: 20px;
-            padding: 12px;
-            display: flex;
-            justify-content: space-between;
-            border-top: 1px solid #dee2e6;
-          }
-          .signature {
-            font-size: 11px;
-            text-align: center;
-          }
-          .signature-line {
-            margin-top: 25px;
-            width: 180px;
-            border-top: 1px solid #000;
-          }
-          @media print {
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>REYS CLINIC - Lab Report - ${test.testName} - ${test.patientName}</title>
+          <style>
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
             body {
-              background: white;
+              font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
+              background: #e6e9ef;
               padding: 0;
               margin: 0;
+              font-size: 14px;
+              line-height: 1.5;
             }
             .report {
-              box-shadow: none;
-              margin: 0;
-              max-width: 100%;
+              max-width: 210mm;
+              min-height: 297mm;
+              margin: 0 auto;
+              background: white;
+              box-shadow: 0 10px 40px rgba(0,0,0,0.1);
             }
             .report-content {
-              padding: 0;
+              padding: 15mm 12mm;
+              background: white;
             }
-            .no-print {
-              display: none;
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #c0392b;
+              padding-bottom: 15px;
+              margin-bottom: 20px;
             }
-          }
-          @page {
-            size: A4;
-            margin: 0;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="report">
-          <div class="report-content">
-            <!-- Header with Logo, Slogan, Doctor Name -->
-            <div class="header">
-              <div class="logo-slogan-container">
-                <img src="${logo}" alt="REYS CLINIC Logo" class="logo-img" style="max-width: 250px; height: auto;" />
-                <div class="clinic-slogan">Quality Care, Trusted Service</div>
+            .logo-slogan-container {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              gap: 5px;
+            }
+            .logo-img {
+              max-width: 100px;
+              height: auto;
+              margin-bottom: 5px;
+            }
+            .clinic-slogan {
+              font-size: 13px;
+              font-style: italic;
+              color: #555;
+              letter-spacing: 1px;
+            }
+            .doctor-name {
+              font-size: 14px;
+              font-weight: bold;
+              color: #333;
+              margin-top: 8px;
+              margin-bottom: 5px;
+            }
+            .clinic-address {
+              font-size: 11px;
+              color: #555;
+              margin-top: 8px;
+            }
+            .contact-info {
+              font-size: 11px;
+              color: #555;
+              margin-top: 3px;
+            }
+            .info-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 8px;
+              margin: 15px 0;
+              padding: 12px;
+              background: #f8f9fa;
+              border: 1px solid #dee2e6;
+            }
+            .info-row {
+              display: flex;
+              align-items: baseline;
+              font-size: 12px;
+            }
+            .info-label {
+              font-weight: bold;
+              width: 110px;
+              min-width: 110px;
+              color: #333;
+            }
+            .info-value {
+              color: #212529;
+              font-weight: normal;
+            }
+            .section-title {
+              font-size: 14px;
+              font-weight: bold;
+              text-transform: uppercase;
+              padding: 8px 12px;
+              background: #f1f3f5;
+              border-bottom: 1px solid #dee2e6;
+              color: #c0392b;
+              margin-top: 15px;
+              margin-bottom: 8px;
+            }
+            .test-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 8px 0;
+            }
+            .test-table th {
+              background: #e9ecef;
+              padding: 8px 10px;
+              text-align: left;
+              font-weight: bold;
+              font-size: 11px;
+              border-bottom: 1px solid #dee2e6;
+              text-transform: uppercase;
+            }
+            .test-table td {
+              padding: 6px 10px;
+              border-bottom: 1px solid #f1f3f5;
+              font-size: 12px;
+            }
+            .test-table tr:last-child td {
+              border-bottom: none;
+            }
+            .parameter-name {
+              font-weight: 500;
+              width: 35%;
+            }
+            .result-value {
+              width: 30%;
+              font-weight: bold;
+              color: #000;
+            }
+            .reference-range {
+              width: 35%;
+              color: #333;
+            }
+            .footer {
+              margin-top: 20px;
+              padding: 12px;
+              border-top: 1px solid #dee2e6;
+              text-align: center;
+              font-size: 10px;
+              color: #666;
+            }
+            .signature-area {
+              margin-top: 20px;
+              padding: 12px;
+              display: flex;
+              justify-content: space-between;
+              border-top: 1px solid #dee2e6;
+            }
+            .signature {
+              font-size: 11px;
+              text-align: center;
+            }
+            .signature-line {
+              margin-top: 25px;
+              width: 180px;
+              border-top: 1px solid #000;
+            }
+            @media print {
+              body {
+                background: white;
+                padding: 0;
+                margin: 0;
+              }
+              .report {
+                box-shadow: none;
+                margin: 0;
+                max-width: 100%;
+              }
+              .report-content {
+                padding: 0;
+              }
+              .no-print {
+                display: none;
+              }
+            }
+            @page {
+              size: A4;
+              margin: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="report">
+            <div class="report-content">
+              <div class="header">
+                <div class="logo-slogan-container">
+                  <img src="${logo}" alt="REYS CLINIC Logo" class="logo-img" style="max-width: 250px; height: auto;" />
+                  <div class="clinic-slogan">Quality Care, Trusted Service</div>
+                </div>
+                ${requesterDisplay ? `<div class="doctor-name">${requesterDisplay}</div>` : ''}
+                <div class="clinic-address">NBC, Albarako, Hodan, Mogadishu, Somalia</div>
+                <div class="contact-info">Tel: 612674455 | 611477201</div>
               </div>
-              <div class="doctor-name">${referredDoctor}</div>
-              <div class="clinic-address">NBC, Albarako, Hodan, Mogadishu, Somalia</div>
-              <div class="contact-info">Tel: 612674455 | 611477201</div>
-            </div>
-            
-            <!-- Patient Information -->
-            <div class="info-grid">
-              <div class="info-row">
-                <span class="info-label">Patient Name:</span>
-                <span class="info-value">${patientGroup.patientName}</span>
+              
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-label">Patient Name:</span>
+                  <span class="info-value">${test.patientName}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Patient ID:</span>
+                  <span class="info-value">${test.requestId?.slice(-6) || Math.floor(Math.random() * 10000)}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Age:</span>
+                  <span class="info-value">${test.patientAge || 'N/A'} Years</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Gender:</span>
+                  <span class="info-value">${test.gender || 'Not specified'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Referred by:</span>
+                  <span class="info-value">${test.requestedBy || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Lab Ref:</span>
+                  <span class="info-value">${labRef}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Examined Date:</span>
+                  <span class="info-value">${examinedDate}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Report Date:</span>
+                  <span class="info-value">${reportDate}</span>
+                </div>
               </div>
-              <div class="info-row">
-                <span class="info-label">Patient ID:</span>
-                <span class="info-value">P${patientGroup.patientId?.slice(-6) || Math.floor(Math.random() * 10000)}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Age:</span>
-                <span class="info-value">${patientGroup.patientAge || 'N/A'} Years</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Gender:</span>
-                <span class="info-value">${patientGroup.gender || 'Not specified'}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Referred by:</span>
-                <span class="info-value">${referredDoctor}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Lab Ref:</span>
-                <span class="info-value">${labRef}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Examined Date:</span>
-                <span class="info-value">${examinedDate}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Report Date:</span>
-                <span class="info-value">${reportDate}</span>
-              </div>
-            </div>
-            
-            <!-- Test Results by Category -->
-            ${Object.entries(categorizedTests).map(([category, tests]) => `
-              <div class="section-title">${category}</div>
-              <table class="test-table">
-                <thead>
-                  <tr>
-                    <th>Test</th>
-                    <th>Result</th>
-                    <th>Reference Range</th>
-                    <th>Flag</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${tests.map(test => {
-                    if (test.resultType === 'multi' && test.parameters && test.parameters.length > 0) {
-                      return test.parameters.map(param => {
-                        const resultValue = test.results?.[param.name] || 'N/A';
-                        let isAbnormal = false;
-                        let flag = '';
-                        
-                        if (param.resultType === 'quantitative') {
-                          const numValue = parseFloat(resultValue);
-                          if (param.normalRangeMin !== undefined && param.normalRangeMax !== undefined && !isNaN(numValue)) {
-                            if (numValue < param.normalRangeMin) {
-                              isAbnormal = true;
-                              flag = 'L';
-                            } else if (numValue > param.normalRangeMax) {
-                              isAbnormal = true;
-                              flag = 'H';
-                            }
-                          }
-                        } else if (param.resultType === 'qualitative' && param.qualitativeOptions) {
-                          if (resultValue === 'Positive' || resultValue === 'Reactive' || resultValue === 'Detected') {
-                            isAbnormal = true;
-                            flag = 'Abnormal';
+              
+              <div class="section-title">${test.testName}</div>
+              
+              ${test.resultType === 'multi' && test.parameters && test.parameters.length > 0 ? `
+                <table class="test-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Result</th>
+                      <th>Reference Range</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${test.parameters.map(param => {
+                      const paramResult = test.results?.[param.name] || 'N/A';
+                      let paramIsAbnormal = false;
+                      let paramFlag = '';
+                      
+                      if (param.resultType === 'quantitative') {
+                        const numValue = parseFloat(paramResult);
+                        if (param.normalRangeMin !== undefined && param.normalRangeMax !== undefined && !isNaN(numValue)) {
+                          if (numValue < param.normalRangeMin) {
+                            paramIsAbnormal = true;
+                            paramFlag = 'L';
+                          } else if (numValue > param.normalRangeMax) {
+                            paramIsAbnormal = true;
+                            paramFlag = 'H';
                           }
                         }
-                        
-                        const rangeText = param.resultType === 'quantitative' 
-                          ? `${param.normalRangeMin || '?'} - ${param.normalRangeMax || '?'} ${param.unit || ''}`
-                          : param.resultType === 'qualitative' 
-                            ? param.qualitativeOptions?.join('/') || 'N/A'
-                            : param.categoricalOptions?.join('/') || 'N/A';
-                        
-                        return `
-                          <tr>
-                            <td class="parameter-name">${param.name}</td>
-                            <td class="result-value"><strong>${resultValue} ${param.unit || ''}</strong></td>
-                            <td class="reference-range">${rangeText}</td>
-                            <td class="flag ${isAbnormal ? 'flag-abnormal' : ''}">${flag || '-'}</td>
-                          </tr>
-                        `;
-                      }).join('');
-                    } else {
-                      const resultValue = Object.values(test.results || {})[0] || 'N/A';
-                      const isAbnormal = test.normalRange && resultValue !== 'N/A' && !isValueInRange(resultValue, test.normalRange);
-                      const flag = isAbnormal ? (parseFloat(resultValue) < parseFloat(test.normalRange?.split('-')[0]) ? 'L' : 'H') : '';
+                      } else if (param.resultType === 'qualitative' && param.qualitativeOptions) {
+                        if (paramResult === 'Positive' || paramResult === 'Reactive' || paramResult === 'Detected') {
+                          paramIsAbnormal = true;
+                          paramFlag = 'Abnormal';
+                        }
+                      }
+                      
+                      const rangeText = param.resultType === 'quantitative' 
+                        ? `${param.normalRangeMin || '?'} - ${param.normalRangeMax || '?'} ${param.unit || ''}`
+                        : param.resultType === 'qualitative' 
+                          ? param.qualitativeOptions?.join('/') || 'N/A'
+                          : param.categoricalOptions?.join('/') || 'N/A';
                       
                       return `
                         <tr>
-                          <td class="parameter-name">${test.testName}</td>
-                          <td class="result-value"><strong>${resultValue} ${test.unit}</strong></td>
-                          <td class="reference-range">${test.normalRange || 'N/A'}</td>
-                          <td class="flag ${isAbnormal ? 'flag-abnormal' : ''}">${flag || '-'}</td>
+                          <td class="parameter-name">${param.name}</td>
+                          <td class="result-value" style="${paramIsAbnormal ? 'color: #c0392b;' : ''}">
+                            <strong>${paramResult} ${param.unit || ''}</strong>
+                            ${paramFlag ? `<span style="margin-left: 8px; font-weight: bold; color: #c0392b;">[${paramFlag}]</span>` : ''}
+                          </td>
+                          <td class="reference-range">${rangeText}</td>
                         </tr>
                       `;
-                    }
-                  }).join('')}
-                </tbody>
-              </table>
-            `).join('')}
-            
-            <!-- Notes if any -->
-            ${patientGroup.tests.some(t => t.notes) ? `
-              <div class="section-title">COMMENTS / NOTES</div>
-              <div style="padding: 10px 12px;">
-                <p style="font-size: 12px; color: #555;">${patientGroup.tests.map(t => t.notes).filter(n => n).join('; ')}</p>
+                    }).join('')}
+                  </tbody>
+                </table>
+              ` : `
+                <table class="test-table">
+                  <thead>
+                    <tr>
+                      <th>Test</th>
+                      <th>Result</th>
+                      <th>Reference Range</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="parameter-name">${test.testName}</td>
+                      <td class="result-value" style="${isAbnormal ? 'color: #c0392b;' : ''}">
+                        <strong>${resultValue} ${test.unit || ''}</strong>
+                        ${flag ? `<span style="margin-left: 8px; font-weight: bold; color: #c0392b;">[${flag}]</span>` : ''}
+                      </td>
+                      <td class="reference-range">${test.normalRange || 'Not specified'}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              `}
+              
+              ${test.notes ? `
+                <div class="section-title">COMMENTS / NOTES</div>
+                <div style="padding: 10px 12px;">
+                  <p style="font-size: 12px; color: #555;">${test.notes}</p>
+                </div>
+              ` : ''}
+              
+              <div class="signature-area">
+                <div class="signature">
+                  <div class="signature-line"></div>
+                  <div>Lab Technician Signature</div>
+                </div>
+                <div class="signature">
+                  <div class="signature-line"></div>
+                  <div>Verified By</div>
+                </div>
               </div>
-            ` : ''}
-            
-            <!-- Signature -->
-            <div class="signature-area">
-              <div class="signature">
-                <div class="signature-line"></div>
-                <div>Lab Technician Signature</div>
+              
+              <div class="footer">
+                <p>** END OF REPORT **</p>
+                <p>Thank you for choosing REYS CLINIC</p>
               </div>
-              <div class="signature">
-                <div class="signature-line"></div>
-                <div>Verified By</div>
-              </div>
-            </div>
-            
-            <!-- Footer -->
-            <div class="footer">
-              <p>** END OF REPORT **</p>
-              <p>Thank you for choosing REYS CLINIC</p>
             </div>
           </div>
-        </div>
-        <div style="text-align: center; margin: 15px 0; padding: 10px;" class="no-print">
-          <button onclick="window.print()" style="padding: 10px 30px; background: #D01A2B; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; margin-right: 10px;">🖨️ Print Report</button>
-          <button onclick="window.close()" style="padding: 10px 30px; background: #666; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;">Close</button>
-        </div>
-      </body>
-    </html>
-  `);
-  printWindow.document.close();
-};
+          <div style="text-align: center; margin: 15px 0; padding: 10px;" class="no-print">
+            <button onclick="window.print()" style="padding: 10px 30px; background: #D01A2B; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; margin-right: 10px;">🖨️ Print Report</button>
+            <button onclick="window.close()" style="padding: 10px 30px; background: #666; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;">Close</button>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const printProfessionalReport = (patientGroup) => {
+    const printWindow = window.open('', '_blank');
+    const labRef = generateLabRef();
+    const reportDate = formatDateForReport(new Date());
+    const examinedDate = patientGroup.tests[0]?.completedAt ? formatDateForReport(patientGroup.tests[0].completedAt) : reportDate;
+    
+    // Get the appropriate requester name - if from reception, don't display name, only if from Dr
+    const firstTest = patientGroup.tests[0];
+    const isFromReception = firstTest.requestedBy?.includes('Reception') || !firstTest.requestedBy?.startsWith('Dr.');
+    const requesterDisplay = isFromReception ? '' : firstTest.requestedBy;
+    
+    // Group tests by category
+    const categorizedTests = {};
+    patientGroup.tests.forEach(test => {
+      let category = 'LABORATORY TESTS';
+      if (test.testName.toLowerCase().includes('cbc') || test.testName.toLowerCase().includes('blood count')) {
+        category = 'HAEMATOLOGY REPORT';
+      } else if (test.testName.toLowerCase().includes('stool') || test.testName.toLowerCase().includes('stool exam')) {
+        category = 'STOOL LETTER REPORT';
+      } else if (test.testName.toLowerCase().includes('crea') || test.testName.toLowerCase().includes('urea') || 
+                 test.testName.toLowerCase().includes('hba1c') || test.testName.toLowerCase().includes('lipid') ||
+                 test.testName.toLowerCase().includes('calcium') || test.testName.toLowerCase().includes('hdl') ||
+                 test.testName.toLowerCase().includes('ldl') || test.testName.toLowerCase().includes('iron')) {
+        category = 'BIOCHEMISTRY REPORT';
+      } else {
+        category = test.testName;
+      }
+      
+      if (!categorizedTests[category]) {
+        categorizedTests[category] = [];
+      }
+      categorizedTests[category].push(test);
+    });
+    
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>REYS CLINIC - Lab Report - ${patientGroup.patientName}</title>
+          <style>
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
+              background: #e6e9ef;
+              padding: 0;
+              margin: 0;
+              font-size: 14px;
+              line-height: 1.5;
+            }
+            .report {
+              max-width: 210mm;
+              min-height: 297mm;
+              margin: 0 auto;
+              background: white;
+              box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            }
+            .report-content {
+              padding: 15mm 12mm;
+              background: white;
+            }
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #c0392b;
+              padding-bottom: 15px;
+              margin-bottom: 20px;
+            }
+            .logo-slogan-container {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              gap: 5px;
+            }
+            .logo-img {
+              max-width: 100px;
+              height: auto;
+              margin-bottom: 5px;
+            }
+            .clinic-slogan {
+              font-size: 13px;
+              font-style: italic;
+              color: #555;
+              letter-spacing: 1px;
+            }
+            .doctor-name {
+              font-size: 14px;
+              font-weight: bold;
+              color: #333;
+              margin-top: 8px;
+              margin-bottom: 5px;
+            }
+            .clinic-address {
+              font-size: 11px;
+              color: #555;
+              margin-top: 8px;
+            }
+            .contact-info {
+              font-size: 11px;
+              color: #555;
+              margin-top: 3px;
+            }
+            .info-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 8px;
+              margin: 15px 0;
+              padding: 12px;
+              background: #f8f9fa;
+              border: 1px solid #dee2e6;
+            }
+            .info-row {
+              display: flex;
+              align-items: baseline;
+              font-size: 12px;
+            }
+            .info-label {
+              font-weight: bold;
+              width: 110px;
+              min-width: 110px;
+              color: #333;
+            }
+            .info-value {
+              color: #212529;
+              font-weight: normal;
+            }
+            .section-title {
+              font-size: 14px;
+              font-weight: bold;
+              text-transform: uppercase;
+              padding: 8px 12px;
+              background: #f1f3f5;
+              border-bottom: 1px solid #dee2e6;
+              color: #c0392b;
+              margin-top: 15px;
+              margin-bottom: 8px;
+            }
+            .test-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 8px 0;
+            }
+            .test-table th {
+              background: #e9ecef;
+              padding: 8px 10px;
+              text-align: left;
+              font-weight: bold;
+              font-size: 11px;
+              border-bottom: 1px solid #dee2e6;
+              text-transform: uppercase;
+            }
+            .test-table td {
+              padding: 6px 10px;
+              border-bottom: 1px solid #f1f3f5;
+              font-size: 12px;
+            }
+            .test-table tr:last-child td {
+              border-bottom: none;
+            }
+            .parameter-name {
+              font-weight: 500;
+              width: 35%;
+            }
+            .result-value {
+              width: 30%;
+              font-weight: bold;
+              color: #000;
+            }
+            .reference-range {
+              width: 35%;
+              color: #333;
+            }
+            .footer {
+              margin-top: 20px;
+              padding: 12px;
+              border-top: 1px solid #dee2e6;
+              text-align: center;
+              font-size: 10px;
+              color: #666;
+            }
+            .signature-area {
+              margin-top: 20px;
+              padding: 12px;
+              display: flex;
+              justify-content: space-between;
+              border-top: 1px solid #dee2e6;
+            }
+            .signature {
+              font-size: 11px;
+              text-align: center;
+            }
+            .signature-line {
+              margin-top: 25px;
+              width: 180px;
+              border-top: 1px solid #000;
+            }
+            @media print {
+              body {
+                background: white;
+                padding: 0;
+                margin: 0;
+              }
+              .report {
+                box-shadow: none;
+                margin: 0;
+                max-width: 100%;
+              }
+              .report-content {
+                padding: 0;
+              }
+              .no-print {
+                display: none;
+              }
+            }
+            @page {
+              size: A4;
+              margin: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="report">
+            <div class="report-content">
+              <div class="header">
+                <div class="logo-slogan-container">
+                  <img src="${logo}" alt="REYS CLINIC Logo" class="logo-img" style="max-width: 250px; height: auto;" />
+                  <div class="clinic-slogan">Quality Care, Trusted Service</div>
+                </div>
+                ${requesterDisplay ? `<div class="doctor-name">${requesterDisplay}</div>` : ''}
+                <div class="clinic-address">NBC, Albarako, Hodan, Mogadishu, Somalia</div>
+                <div class="contact-info">Tel: 612674455 | 611477201</div>
+              </div>
+              
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-label">Patient Name:</span>
+                  <span class="info-value">${patientGroup.patientName}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Patient ID:</span>
+                  <span class="info-value">P${patientGroup.patientId?.slice(-6) || Math.floor(Math.random() * 10000)}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Age:</span>
+                  <span class="info-value">${patientGroup.patientAge || 'N/A'} Years</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Gender:</span>
+                  <span class="info-value">${patientGroup.gender || 'Not specified'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Referred by:</span>
+                  <span class="info-value">${patientGroup.tests[0]?.requestedBy || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Lab Ref:</span>
+                  <span class="info-value">${labRef}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Examined Date:</span>
+                  <span class="info-value">${examinedDate}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Report Date:</span>
+                  <span class="info-value">${reportDate}</span>
+                </div>
+              </div>
+              
+              ${Object.entries(categorizedTests).map(([category, tests]) => `
+                <div class="section-title">${category}</div>
+                <table class="test-table">
+                  <thead>
+                    <tr>
+                      <th>Test / Parameter</th>
+                      <th>Result</th>
+                      <th>Reference Range</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${tests.map(test => {
+                      if (test.resultType === 'multi' && test.parameters && test.parameters.length > 0) {
+                        return test.parameters.map(param => {
+                          const resultValue = test.results?.[param.name] || 'N/A';
+                          let isAbnormal = false;
+                          let flag = '';
+                          
+                          if (param.resultType === 'quantitative') {
+                            const numValue = parseFloat(resultValue);
+                            if (param.normalRangeMin !== undefined && param.normalRangeMax !== undefined && !isNaN(numValue)) {
+                              if (numValue < param.normalRangeMin) {
+                                isAbnormal = true;
+                                flag = 'L';
+                              } else if (numValue > param.normalRangeMax) {
+                                isAbnormal = true;
+                                flag = 'H';
+                              }
+                            }
+                          } else if (param.resultType === 'qualitative' && param.qualitativeOptions) {
+                            if (resultValue === 'Positive' || resultValue === 'Reactive' || resultValue === 'Detected') {
+                              isAbnormal = true;
+                              flag = 'Abnormal';
+                            }
+                          }
+                          
+                          const rangeText = param.resultType === 'quantitative' 
+                            ? `${param.normalRangeMin || '?'} - ${param.normalRangeMax || '?'} ${param.unit || ''}`
+                            : param.resultType === 'qualitative' 
+                              ? param.qualitativeOptions?.join('/') || 'N/A'
+                              : param.categoricalOptions?.join('/') || 'N/A';
+                          
+                          return `
+                            <tr>
+                              <td class="parameter-name">${param.name}</td>
+                              <td class="result-value" style="${isAbnormal ? 'color: #c0392b;' : ''}">
+                                <strong>${resultValue} ${param.unit || ''}</strong>
+                                ${flag ? `<span style="margin-left: 8px;">[${flag}]</span>` : ''}
+                              </td>
+                              <td class="reference-range">${rangeText}</td>
+                            </tr>
+                          `;
+                        }).join('');
+                      } else {
+                        const resultValue = Object.values(test.results || {})[0] || 'N/A';
+                        const isAbnormal = test.normalRange && resultValue !== 'N/A' && !isValueInRange(resultValue, test.normalRange);
+                        const flag = isAbnormal ? (parseFloat(resultValue) < parseFloat(test.normalRange?.split('-')[0]) ? 'L' : 'H') : '';
+                        
+                        return `
+                          <tr>
+                            <td class="parameter-name">${test.testName}</td>
+                            <td class="result-value" style="${isAbnormal ? 'color: #c0392b;' : ''}">
+                              <strong>${resultValue} ${test.unit || ''}</strong>
+                              ${flag ? `<span style="margin-left: 8px;">[${flag}]</span>` : ''}
+                            </td>
+                            <td class="reference-range">${test.normalRange || 'N/A'}</td>
+                          </tr>
+                        `;
+                      }
+                    }).join('')}
+                  </tbody>
+                </table>
+              `).join('')}
+              
+              ${patientGroup.tests.some(t => t.notes) ? `
+                <div class="section-title">COMMENTS / NOTES</div>
+                <div style="padding: 10px 12px;">
+                  <p style="font-size: 12px; color: #555;">${patientGroup.tests.map(t => t.notes).filter(n => n).join('; ')}</p>
+                </div>
+              ` : ''}
+              
+              <div class="signature-area">
+                <div class="signature">
+                  <div class="signature-line"></div>
+                  <div>Lab Technician Signature</div>
+                </div>
+                <div class="signature">
+                  <div class="signature-line"></div>
+                  <div>Verified By</div>
+                </div>
+              </div>
+              
+              <div class="footer">
+                <p>** END OF REPORT **</p>
+                <p>Thank you for choosing REYS CLINIC</p>
+              </div>
+            </div>
+          </div>
+          <div style="text-align: center; margin: 15px 0; padding: 10px;" class="no-print">
+            <button onclick="window.print()" style="padding: 10px 30px; background: #D01A2B; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; margin-right: 10px;">🖨️ Print Report</button>
+            <button onclick="window.close()" style="padding: 10px 30px; background: #666; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;">Close</button>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
 
   const handlePrintAllResults = (patientGroup) => {
     printProfessionalReport(patientGroup);
@@ -1086,6 +1453,14 @@ const LabTechResults = () => {
                                             <p className="text-xs text-gray-500 mt-1">Requested By: {test.requestedBy}</p>
                                             <p className="text-xs text-gray-500">Completed: {formatDate(test.completedAt)}</p>
                                           </div>
+                                          {/* Print button for each test */}
+                                          <button
+                                            onClick={() => printSingleTest(test)}
+                                            className="px-3 py-1 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 flex items-center space-x-1"
+                                          >
+                                            <Printer className="w-3 h-3" />
+                                            <span>Print Test</span>
+                                          </button>
                                         </div>
                                         
                                         <div className="mt-3 pt-3 border-t">
@@ -1121,7 +1496,7 @@ const LabTechResults = () => {
                                       className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 flex items-center space-x-2"
                                     >
                                       <Printer className="w-4 h-4" />
-                                      <span>Print Professional Report</span>
+                                      <span>Print All Reports</span>
                                     </button>
                                     <button
                                       onClick={() => handleSendToRequester(patient)}
@@ -1133,8 +1508,8 @@ const LabTechResults = () => {
                                   </div>
                                 </div>
                               </td>
-                              </tr>
-                            )}
+                            </tr>
+                          )}
                         </React.Fragment>
                       );
                     })}
@@ -1246,6 +1621,14 @@ const LabTechResults = () => {
                           <p className="text-sm text-gray-500">Requested By: {test.requestedBy}</p>
                           <p className="text-sm text-gray-500">Completed: {formatDate(test.completedAt)}</p>
                         </div>
+                        {/* Print button for each test in modal */}
+                        <button
+                          onClick={() => printSingleTest(test)}
+                          className="px-3 py-1 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 flex items-center space-x-1"
+                        >
+                          <Printer className="w-3 h-3" />
+                          <span>Print Test</span>
+                        </button>
                       </div>
                       
                       <div className="mt-3 pt-3 border-t">
@@ -1282,7 +1665,7 @@ const LabTechResults = () => {
                   className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 flex items-center justify-center space-x-2"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>Print Professional Report</span>
+                  <span>Print All Reports</span>
                 </button>
                 <button
                   onClick={() => handleSendToRequester(selectedPatientGroup)}

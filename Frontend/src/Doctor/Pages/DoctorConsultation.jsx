@@ -643,32 +643,25 @@ const DoctorConsultation = () => {
             body {
               font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
               background: #fff;
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              min-height: 100vh;
-              padding: 0;
-              margin: 0;
+              font-size: 12px;
+              line-height: 1.5;
             }
-            /* A5 size - exactly 148mm x 210mm */
             .report {
               width: 148mm;
-              height: 210mm;
+              min-height: 210mm;
               background: white;
-              
-              box-shadow: 0 0 10px rgba(0,0,0,0.1);
-              margin: 0;
-              padding: 0;
-              page-break-after: avoid;
-              page-break-inside: avoid;
-              break-inside: avoid;
+              margin: 0 auto;
+              position: relative;
             }
             .report-content {
               padding: 8mm 6mm;
-              height: 100%;
+              position: relative;
+              min-height: 210mm;
               display: flex;
               flex-direction: column;
-              justify-content: space-between;
+            }
+            .report-body {
+              flex: 1;
             }
             .header {
               text-align: center;
@@ -682,25 +675,25 @@ const DoctorConsultation = () => {
               margin-bottom: 5px;
             }
             .doctor-name {
-              font-size: 14px;
+              font-size: 13px;
               font-weight: bold;
               margin: 3px 0 2px;
               text-transform: capitalize;
             }
             .doctor-title {
-              font-size: 11px;
+              font-size: 10px;
               font-weight: bold;
               color: #333;
               margin-bottom: 5px;
             }
             .clinic-address {
-              font-size: 10px;
+              font-size: 9px;
               font-weight: bold;
               color: #333;
               margin-top: 3px;
             }
             .contact-info {
-              font-size: 10px;
+              font-size: 9px;
               font-weight: bold;
               color: #333;
             }
@@ -709,14 +702,14 @@ const DoctorConsultation = () => {
               grid-template-columns: 1fr 1fr;
               gap: 4px;
               margin-bottom: 10px;
-              padding: 6px;
+              padding: 8px;
               background: #f8f9fa;
               border: 1px solid #dee2e6;
             }
             .info-row {
               display: flex;
               align-items: baseline;
-              font-size: 9px;
+              font-size: 10px;
             }
             .info-label {
               font-weight: bold;
@@ -743,42 +736,49 @@ const DoctorConsultation = () => {
             }
             .test-table th {
               background: #e9ecef;
-              padding: 5px;
+              padding: 6px;
               text-align: left;
               font-weight: bold;
-              font-size: 9px;
+              font-size: 10px;
               border-bottom: 1px solid #dee2e6;
             }
             .test-table td {
-              padding: 4px 5px;
-              font-size: 9px;
+              padding: 5px 6px;
+              font-size: 10px;
               border-bottom: 1px solid #f1f3f5;
             }
+            .signature-area {
+              margin-top: 20px;
+              padding: 12px;
+              display: flex;
+              justify-content: space-between;
+              border-top: 1px solid #dee2e6;
+            }
+            .signature {
+              font-size: 10px;
+              text-align: center;
+            }
+            .signature-line {
+              margin-top: 20px;
+              width: 160px;
+              border-top: 1px solid #000;
+            }
             .footer {
-              margin-top: 12px;
+              margin-top: 10px;
               padding: 6px;
               border-top: 1px solid #dee2e6;
               text-align: center;
               font-size: 8px;
               color: #666;
             }
-            /* Prevent page breaks */
             @media print {
               body {
-                padding: 0;
                 margin: 0;
+                padding: 0;
               }
               .report {
-                
-                
+                margin: 0;
                 page-break-after: avoid;
-                page-break-inside: avoid;
-                break-inside: avoid;
-                break-after: avoid;
-              }
-              html, body {
-                height: auto;
-                overflow: visible;
               }
             }
             @page {
@@ -790,7 +790,7 @@ const DoctorConsultation = () => {
         <body>
           <div class="report">
             <div class="report-content">
-              <div>
+              <div class="report-body">
                 <div class="header">
                   <img src="${logoBase64}" alt="REYS CLINIC Logo" class="logo-img" />
                   <div class="doctor-name">Dr. ${user?.name}</div>
@@ -806,7 +806,8 @@ const DoctorConsultation = () => {
                   </div>
                   <div class="info-row">
                     <span class="info-label">Patient ID:</span>
-                    <span class="info-value">${selectedPatient.patientId || 'P-' + selectedPatient._id?.slice(-6)}</span>                  </div>
+                    <span class="info-value">${selectedPatient.patientId || 'N/A'}</span>
+                  </div>
                   <div class="info-row">
                     <span class="info-label">Age:</span>
                     <span class="info-value">${selectedPatient.childAge} years</span>
@@ -853,6 +854,18 @@ const DoctorConsultation = () => {
                 </table>
               </div>
               
+              <div class="signature-area">
+                <div class="signature">
+                  <div class="signature-line"></div>
+                  <div>Doctor's Signature</div>
+                  <div>Dr. ${user?.name}</div>
+                </div>
+                <div class="signature">
+                  <div class="signature-line"></div>
+                  <div>Laboratory Stamp</div>
+                </div>
+              </div>
+              
               <div class="footer">
                 <p>** END OF REQUEST **</p>
                 <p>Thank you for choosing REYS CLINIC</p>
@@ -893,31 +906,25 @@ const handleSendPrescriptions = () => {
             body {
               font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
               background: #fff;
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              min-height: 100vh;
-              padding: 0;
-              margin: 0;
+              font-size: 12px;
+              line-height: 1.5;
             }
             .report {
               width: 148mm;
-              height: 210mm;
+              min-height: 210mm;
               background: white;
-              
-              box-shadow: 0 0 10px rgba(0,0,0,0.1);
-              margin: 0;
-              padding: 0;
-              page-break-after: avoid;
-              page-break-inside: avoid;
-              break-inside: avoid;
+              margin: 0 auto;
+              position: relative;
             }
             .report-content {
               padding: 8mm 6mm;
-              height: 100%;
+              position: relative;
+              min-height: 210mm;
               display: flex;
               flex-direction: column;
-              justify-content: space-between;
+            }
+            .report-body {
+              flex: 1;
             }
             .header {
               text-align: center;
@@ -931,25 +938,25 @@ const handleSendPrescriptions = () => {
               margin-bottom: 5px;
             }
             .doctor-name {
-              font-size: 14px;
+              font-size: 13px;
               font-weight: bold;
               margin: 3px 0 2px;
               text-transform: capitalize;
             }
             .doctor-title {
-              font-size: 11px;
+              font-size: 10px;
               font-weight: bold;
               color: #333;
               margin-bottom: 5px;
             }
             .clinic-address {
-              font-size: 10px;
+              font-size: 9px;
               font-weight: bold;
               color: #333;
               margin-top: 3px;
             }
             .contact-info {
-              font-size: 10px;
+              font-size: 9px;
               font-weight: bold;
               color: #333;
             }
@@ -958,14 +965,14 @@ const handleSendPrescriptions = () => {
               grid-template-columns: 1fr 1fr;
               gap: 4px;
               margin-bottom: 10px;
-              padding: 6px;
+              padding: 8px;
               background: #f8f9fa;
               border: 1px solid #dee2e6;
             }
             .info-row {
               display: flex;
               align-items: baseline;
-              font-size: 9px;
+              font-size: 10px;
             }
             .info-label {
               font-weight: bold;
@@ -992,26 +999,42 @@ const handleSendPrescriptions = () => {
             }
             .med-table th {
               background: #e9ecef;
-              padding: 5px;
+              padding: 6px;
               text-align: left;
               font-weight: bold;
-              font-size: 8px;
+              font-size: 9px;
               border-bottom: 1px solid #dee2e6;
             }
             .med-table td {
-              padding: 4px 5px;
-              font-size: 8px;
+              padding: 5px 6px;
+              font-size: 9px;
               border-bottom: 1px solid #f1f3f5;
             }
             .doctor-notes {
               margin-top: 8px;
-              padding: 5px;
+              padding: 6px;
               background: #fef3c7;
-              font-size: 8px;
+              font-size: 9px;
+            }
+            .signature-area {
+              margin-top: 20px;
+              padding: 12px;
+              display: flex;
+              justify-content: space-between;
+              border-top: 1px solid #dee2e6;
+            }
+            .signature {
+              font-size: 10px;
+              text-align: center;
+            }
+            .signature-line {
+              margin-top: 20px;
+              width: 160px;
+              border-top: 1px solid #000;
             }
             .footer {
               margin-top: 10px;
-              padding: 5px;
+              padding: 6px;
               border-top: 1px solid #dee2e6;
               text-align: center;
               font-size: 8px;
@@ -1019,20 +1042,12 @@ const handleSendPrescriptions = () => {
             }
             @media print {
               body {
-                padding: 0;
                 margin: 0;
+                padding: 0;
               }
               .report {
-                
-                
+                margin: 0;
                 page-break-after: avoid;
-                page-break-inside: avoid;
-                break-inside: avoid;
-                break-after: avoid;
-              }
-              html, body {
-                height: auto;
-                overflow: visible;
               }
             }
             @page {
@@ -1044,7 +1059,7 @@ const handleSendPrescriptions = () => {
         <body>
           <div class="report">
             <div class="report-content">
-              <div>
+              <div class="report-body">
                 <div class="header">
                   <img src="${logoBase64}" alt="REYS CLINIC Logo" class="logo-img" />
                   <div class="doctor-name">Dr. ${user?.name}</div>
@@ -1060,7 +1075,8 @@ const handleSendPrescriptions = () => {
                   </div>
                   <div class="info-row">
                     <span class="info-label">Patient ID:</span>
-                    <span class="info-value">${selectedPatient.patientId || 'P-' + selectedPatient._id?.slice(-6)}</span>                  </div>
+                    <span class="info-value">${selectedPatient.patientId || 'P-' + selectedPatient._id?.slice(-6)}</span>
+                  </div>
                   <div class="info-row">
                     <span class="info-label">Age:</span>
                     <span class="info-value">${selectedPatient.childAge} years</span>
@@ -1111,6 +1127,18 @@ const handleSendPrescriptions = () => {
                     <strong>Doctor's Notes:</strong> ${consultationData.notes}
                   </div>
                 ` : ''}
+              </div>
+              
+              <div class="signature-area">
+                <div class="signature">
+                  <div class="signature-line"></div>
+                  <div>Doctor's Signature</div>
+                  <div>Dr. ${user?.name}</div>
+                </div>
+                <div class="signature">
+                  <div class="signature-line"></div>
+                  <div>Patient/Parent Signature</div>
+                </div>
               </div>
               
               <div class="footer">
@@ -1499,7 +1527,11 @@ const handleCompleteConsultation = async () => {
                   <tbody className="divide-y">
                     {currentPatients.map((patient) => (
                       <tr key={patient._id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4"><span className="font-mono text-sm text-[#D01A2B]">{patient.patientId || `P-${patient._id?.slice(-6)}`}</span></td>
+                        <td className="px-6 py-4">
+                          <span className="font-mono text-sm text-[#D01A2B]">
+                            {patient.patientId || `P-${patient._id?.slice(-6)}`}
+                          </span>
+                        </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center space-x-2 flex-wrap">
                             <Baby className="w-4 h-4 text-gray-400" />
@@ -2097,5 +2129,3 @@ const handleCompleteConsultation = async () => {
 };
 
 export default DoctorConsultation;
-
-// <p className="text-sm text-gray-500">{selectedPatient.childName} • Age: {selectedPatient.childAge} years</p>

@@ -244,75 +244,113 @@ const patientSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Generate unique patient ID ONLY if not provided by frontend
-patientSchema.pre('save', async function(next) {
-  // If patientId is already provided (by frontend), use it
-  if (this.patientId) {
-    // Verify uniqueness
-    const Patient = mongoose.model('Patient');
-    const existing = await Patient.findOne({ patientId: this.patientId, _id: { $ne: this._id } });
-    if (existing) {
-      // If conflict, generate a new one
-      return this.generateSequentialId(next);
-    }
-    return next();
-  }
+/**
+ * Generate sequential patient ID based on department
+ * Doctor patients: P-00001, P-00002, etc.
+ * Lab patients: L-00001, L-00002, etc.
+ */
+patientSchema.methods.generateSequentialId = async function() {
+  const Patient = mongoose.model('Patient');
   
-  // Otherwise generate sequential ID
-  this.generateSequentialId(next);
-});
-
-// Method to generate sequential patient ID
-patientSchema.methods.generateSequentialId = async function(next) {
-  try {
-    const Patient = mongoose.model('Patient');
-    
-    // Find the last patient to get the highest sequential number
-    const lastPatient = await Patient.findOne({ 
-      patientId: { $regex: /^P-\d{5,6}$/ } 
-    }).sort({ patientId: -1 }).limit(1);
-    
-    let nextNumber = 1;
-    
-    if (lastPatient && lastPatient.patientId) {
-      // Extract the number from P-XXXXX or P-XXXXXX format
-      const match = lastPatient.patientId.match(/P-(\d+)/);
+  // Determine prefix based on referredTo department
+  const prefix = this.referredTo === 'doctor' ? 'P' : 'L';
+  
+  // Find all patients with the same prefix
+  const patientsWithSamePrefix = await Patient.find({ 
+    patientId: { $regex: `^${prefix}-\\d+$` } 
+  }).select('patientId');
+  
+  let maxNumber = 0;
+  
+  // Extract the maximum sequential number from existing IDs with same prefix
+  for (const patient of patientsWithSamePrefix) {
+    if (patient.patientId) {
+      const match = patient.patientId.match(new RegExp(`${prefix}-(\\d+)`));
       if (match && match[1]) {
-        const lastNumber = parseInt(match[1], 10);
-        if (!isNaN(lastNumber)) {
-          nextNumber = lastNumber + 1;
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNumber) {
+          maxNumber = num;
         }
       }
     }
-    
-    // Format with 5 digits padding (00001, 00002, etc.)
-    this.patientId = `P-${nextNumber.toString().padStart(5, '0')}`;
-    
-    // Double-check uniqueness in case of race condition
-    let existing = await Patient.findOne({ patientId: this.patientId });
-    while (existing) {
-      nextNumber++;
-      this.patientId = `P-${nextNumber.toString().padStart(5, '0')}`;
-      existing = await Patient.findOne({ patientId: this.patientId });
-    }
-    
-    console.log(`Generated patient ID: ${this.patientId} (sequential number: ${nextNumber})`);
-    if (next) next();
-  } catch (error) {
-    console.error('Error generating sequential patient ID:', error);
-    // Fallback to timestamp-based ID if sequential fails
-    const timestamp = Date.now().toString().slice(-5);
-    this.patientId = `P-${timestamp}`;
-    
-    // Ensure uniqueness for fallback
-    const Patient = mongoose.model('Patient');
-    let existing = await Patient.findOne({ patientId: this.patientId });
-    if (existing) {
-      this.patientId = `P-${timestamp}-${Math.floor(Math.random() * 1000)}`;
-    }
-    if (next) next();
   }
+  
+  // Calculate next number - always start from 1 if no patients exist for this prefix
+  const nextNumber = maxNumber === 0 ? 1 : maxNumber + 1;
+  // Format with 5 digits padding (00001, 00002, etc.)
+  const newPatientId = `${prefix}-${nextNumber.toString().padStart(5, '0')}`;
+  
+  // Final safety check for uniqueness
+  let existing = await Patient.findOne({ patientId: newPatientId });
+  let attempts = 0;
+  let finalNumber = nextNumber;
+  let finalId = newPatientId;
+  
+  while (existing && attempts < 10) {
+    finalNumber = (maxNumber === 0 ? 1 : maxNumber) + attempts + 2;
+    finalId = `${prefix}-${finalNumber.toString().padStart(5, '0')}`;
+    existing = await Patient.findOne({ patientId: finalId });
+    attempts++;
+  }
+  
+  this.patientId = finalId;
+  console.log(`[Patient Model] Generated ${this.referredTo} patient ID: ${this.patientId} (max ${prefix} patients: ${maxNumber} → new number: ${finalNumber})`);
+  return this.patientId;
 };
+
+// Pre-save middleware to handle patient ID generation
+patientSchema.pre('save', async function(next) {
+  try {
+    // For existing documents that already have a valid patientId, skip generation
+    if (!this.isNew && this.patientId && this.patientId.match(/^[PL]-\d{5,6}$/)) {
+      console.log(`[Patient Model] Existing patient with ID: ${this.patientId}, skipping generation`);
+      return next();
+    }
+    
+    // For new documents or documents without a valid patientId, generate one
+    if (!this.patientId || this.patientId === '' || this.patientId.startsWith('temp_') || !this.patientId.match(/^[PL]-\d{5,6}$/)) {
+      console.log(`[Patient Model] Generating new patient ID for: ${this.childName} (${this.referredTo})`);
+      await this.generateSequentialId();
+      return next();
+    }
+    
+    // Verify the prefix matches the referredTo department
+    const expectedPrefix = this.referredTo === 'doctor' ? 'P' : 'L';
+    const actualPrefix = this.patientId.charAt(0);
+    
+    if (actualPrefix !== expectedPrefix) {
+      console.log(`[Patient Model] Prefix mismatch: ${this.patientId} has prefix ${actualPrefix} but expected ${expectedPrefix}. Generating new ID.`);
+      await this.generateSequentialId();
+      return next();
+    }
+    
+    // If patientId is provided, verify it's unique
+    const Patient = mongoose.model('Patient');
+    const existing = await Patient.findOne({ 
+      patientId: this.patientId, 
+      _id: { $ne: this._id } 
+    });
+    
+    if (existing) {
+      console.log(`[Patient Model] ID conflict: ${this.patientId} already exists. Generating new ID.`);
+      await this.generateSequentialId();
+      return next();
+    }
+    
+    // Validate format
+    const idPattern = /^[PL]-\d{5,6}$/;
+    if (!idPattern.test(this.patientId)) {
+      console.log(`[Patient Model] Invalid format: ${this.patientId}. Generating new ID.`);
+      await this.generateSequentialId();
+      return next();
+    }
+    
+    next();
+  } catch (error) {
+    console.error('[Patient Model] Error in pre-save hook:', error);
+    next(error);
+  }
+});
 
 // Virtual for full patient info
 patientSchema.virtual('fullName').get(function() {
@@ -323,10 +361,10 @@ patientSchema.virtual('fullName').get(function() {
 patientSchema.set('toJSON', { virtuals: true });
 patientSchema.set('toObject', { virtuals: true });
 
-// Indexes
+// Indexes for better query performance
 patientSchema.index({ patientId: 1 });
-patientSchema.index({ childName: 'text', parentName: 'text', parentPhone: 'text' });
 patientSchema.index({ referredTo: 1 });
+patientSchema.index({ childName: 'text', parentName: 'text', parentPhone: 'text' });
 patientSchema.index({ status: 1 });
 patientSchema.index({ registeredBy: 1 });
 patientSchema.index({ assignedLabTechId: 1 });

@@ -81,6 +81,16 @@ const RegisterPatient = () => {
       navigate('/');
       return;
     }
+    if (localStorage.getItem('lastPatientId')) {
+      console.log('Removing legacy patient ID counter from localStorage');
+      localStorage.removeItem('lastPatientId');
+    }
+        if (localStorage.getItem('patientIdCounter')) {
+      localStorage.removeItem('patientIdCounter');
+    }
+    if (localStorage.getItem('nextPatientNumber')) {
+      localStorage.removeItem('nextPatientNumber');
+    }
   }, [user, isAuthenticated, navigate]);
 
   useEffect(() => {
@@ -305,131 +315,132 @@ const RegisterPatient = () => {
   };
 
   const handleSubmit = async (isPaid = false) => {
-    if (!validateForm()) return;
+  if (!validateForm()) return;
+  
+  setLoading(true);
+  
+  try {
+    const token = localStorage.getItem('token');
+    // REMOVED: patientIdNumber generation - let backend handle it
     
-    setLoading(true);
+    // Calculate total fee based on department
+    let totalFee = 0;
+    let labTestDetails = [];
+    let labTestNames = [];
     
-    try {
-      const token = localStorage.getItem('token');
-      // Generate patient ID - SAME FOR BOTH DOCTOR AND LAB
-      const patientIdNumber = generatePatientId();
-      
-      // Calculate total fee based on department
-      let totalFee = 0;
-      let labTestDetails = [];
-      let labTestNames = [];
-      
-      if (selectedDepartment === 'doctor') {
-        totalFee = doctorTicketFee;
-      } else if (selectedDepartment === 'lab-tech') {
-        // Get full test details including prices and names
-        labTestDetails = labTests.filter(test => formData.selectedLabTests.includes(test._id));
-        totalFee = labTestDetails.reduce((sum, test) => sum + (test.price || 0), 0);
-        labTestNames = labTestDetails.map(test => test.name);
-      }
-      
-      const payload = {
-        childName: formData.childName,
-        childAge: parseInt(formData.childAge),
-        childGender: formData.childGender,
-        parentName: formData.parentName,
-        parentPhone: formData.parentPhone,
-        parentEmail: formData.parentEmail,
-        parentAddress: formData.parentAddress,
-        referredTo: formData.referredTo,
-        assignedDoctor: formData.assignedDoctor,
-        assignedLabTech: formData.assignedLabTech,
-        urgency: formData.urgency,
-        paymentStatus: isPaid ? 'paid' : formData.paymentStatus,
-        paidAmount: isPaid ? totalFee : formData.paidAmount,
-        paymentMethod: isPaid ? paymentMethod : formData.paymentMethod,
-        paymentDate: isPaid ? new Date().toISOString() : null,
-        isFollowUp: formData.isFollowUp,
-        previousConsultationId: formData.previousConsultationId,
-        followUpReason: formData.followUpReason,
-        status: formData.referredTo === 'doctor' ? 'pending' : 'pending',
-        patientId: patientIdNumber, // This will be P-XXXXX format
-        ticketFee: totalFee // Store total fee
-      };
-      
-      if (formData.referredTo === 'doctor') {
-        payload.visitReason = formData.visitReason;
-        payload.previousVisits = formData.previousVisits;
-      }
-      
-      if (formData.referredTo === 'lab-tech') {
-        payload.selectedLabTests = formData.selectedLabTests;
-        payload.labTestNotes = formData.labTestNotes;
-        payload.labTestNames = labTestNames;
-      }
-      
-      console.log('Sending payload:', payload);
-      
-      const response = await fetch(`${API_BASE_URL}/api/patients/register-direct`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      }); 
-      
-      const data = await response.json();
-      
-      if (!response.ok) throw new Error(data.msg || 'Failed to register patient');
-      
-      if (data.success) {
-        // Add the total fee and test details to the patient data for receipt display
-        const patientData = { 
-          ...data.data.patient, 
-          generatedPatientId: patientIdNumber,
-          calculatedTotalFee: totalFee,
-          labTestDetails: labTestDetails,
-          labTestNames: labTestNames
-        };
-        setRegisteredPatient(patientData);
-        setShowConfirmation(true);
-        
-        if (isPaid) {
-          toast.success(`Payment of $${totalFee.toFixed(2)} collected! Patient registered.`);
-        } else {
-          toast.success('Patient registered successfully!');
-        }
-        
-        // Reset form
-        setFormData({
-          childName: '',
-          childAge: '',
-          childGender: '',
-          parentName: '',
-          parentPhone: '',
-          parentEmail: '',
-          parentAddress: '',
-          referredTo: '',
-          assignedDoctor: '',
-          assignedLabTech: '',
-          selectedLabTests: [],
-          labTestNotes: '',
-          visitReason: '',
-          previousVisits: 'no',
-          urgency: 'normal',
-          paymentStatus: 'pending',
-          paidAmount: 0,
-          paymentMethod: 'cash',
-          paymentDate: null,
-          isFollowUp: false,
-          previousConsultationId: '',
-          followUpReason: ''
-        });
-        setSelectedDepartment(null);
-      }
-    } catch (error) {
-      console.error('Registration error:', error);
-      toast.error(error.message || 'Failed to register patient');
-    } finally {
-      setLoading(false);
+    if (selectedDepartment === 'doctor') {
+      totalFee = doctorTicketFee;
+    } else if (selectedDepartment === 'lab-tech') {
+      labTestDetails = labTests.filter(test => formData.selectedLabTests.includes(test._id));
+      totalFee = labTestDetails.reduce((sum, test) => sum + (test.price || 0), 0);
+      labTestNames = labTestDetails.map(test => test.name);
     }
-  };
+    
+    // Create payload WITHOUT patientId - backend will generate it
+    const payload = {
+      childName: formData.childName,
+      childAge: parseInt(formData.childAge),
+      childGender: formData.childGender,
+      parentName: formData.parentName,
+      parentPhone: formData.parentPhone,
+      parentEmail: formData.parentEmail,
+      parentAddress: formData.parentAddress,
+      referredTo: formData.referredTo,
+      assignedDoctor: formData.assignedDoctor,
+      assignedLabTech: formData.assignedLabTech,
+      urgency: formData.urgency,
+      paymentStatus: isPaid ? 'paid' : formData.paymentStatus,
+      paidAmount: isPaid ? totalFee : formData.paidAmount,
+      paymentMethod: isPaid ? paymentMethod : formData.paymentMethod,
+      paymentDate: isPaid ? new Date().toISOString() : null,
+      isFollowUp: formData.isFollowUp,
+      previousConsultationId: formData.previousConsultationId,
+      followUpReason: formData.followUpReason,
+      status: formData.referredTo === 'doctor' ? 'pending' : 'pending',
+      // DO NOT include patientId - let backend generate it
+      ticketFee: totalFee // Store total fee
+    };
+    
+    // Add doctor-specific fields
+    if (formData.referredTo === 'doctor') {
+      payload.visitReason = formData.visitReason;
+      payload.previousVisits = formData.previousVisits;
+    }
+    
+    // Add lab-specific fields
+    if (formData.referredTo === 'lab-tech') {
+      payload.selectedLabTests = formData.selectedLabTests;
+      payload.labTestNotes = formData.labTestNotes;
+      payload.labTestNames = labTestNames;
+    }
+    
+    console.log('Sending payload:', payload);
+    
+    const response = await fetch(`${API_BASE_URL}/api/patients/register-direct`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    }); 
+    
+    const data = await response.json();
+    
+    if (!response.ok) throw new Error(data.msg || 'Failed to register patient');
+    
+    if (data.success) {
+      // The backend will have generated the patientId (format: P-00001, P-00002, etc.)
+      const patientData = { 
+        ...data.data.patient, 
+        // Remove any reference to generatedPatientId - use the one from backend
+        calculatedTotalFee: totalFee,
+        labTestDetails: labTestDetails,
+        labTestNames: labTestNames
+      };
+      setRegisteredPatient(patientData);
+      setShowConfirmation(true);
+      
+      if (isPaid) {
+        toast.success(`Payment of $${totalFee.toFixed(2)} collected! Patient registered.`);
+      } else {
+        toast.success('Patient registered successfully!');
+      }
+      
+      // Reset form
+      setFormData({
+        childName: '',
+        childAge: '',
+        childGender: '',
+        parentName: '',
+        parentPhone: '',
+        parentEmail: '',
+        parentAddress: '',
+        referredTo: '',
+        assignedDoctor: '',
+        assignedLabTech: '',
+        selectedLabTests: [],
+        labTestNotes: '',
+        visitReason: '',
+        previousVisits: 'no',
+        urgency: 'normal',
+        paymentStatus: 'pending',
+        paidAmount: 0,
+        paymentMethod: 'cash',
+        paymentDate: null,
+        isFollowUp: false,
+        previousConsultationId: '',
+        followUpReason: ''
+      });
+      setSelectedDepartment(null);
+    }
+  } catch (error) {
+    console.error('Registration error:', error);
+    toast.error(error.message || 'Failed to register patient');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleNewRegistration = () => {
     setShowConfirmation(false);
@@ -951,7 +962,10 @@ const RegisterPatient = () => {
                   <span>Patient Information</span>
                 </h3>
                 <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-                  <div className="flex justify-between"><span className="text-gray-500">Patient ID:</span><span className="font-mono font-semibold">{registeredPatient.generatedPatientId || registeredPatient.patientId}</span></div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Patient ID:</span>
+                    <span className="font-mono font-semibold">{registeredPatient.patientId}</span>
+                  </div>
                   <div className="flex justify-between"><span className="text-gray-500">Child Name:</span><span className="font-semibold">{registeredPatient.childName}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Age:</span><span>{registeredPatient.childAge} years</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Sex:</span><span>{registeredPatient.childGender || 'Not specified'}</span></div>
