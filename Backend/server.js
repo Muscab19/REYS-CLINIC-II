@@ -51,6 +51,7 @@ const salesRoutes = require('./routes/sales');
 const inpatientRoutes = require('./routes/inpatients');
 const labPaymentRoutes = require('./routes/labPayments');
 const revenueRoutes = require('./routes/revenueRoutes');
+const labTestCategoryRoutes = require('./routes/lab-test-categories');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -65,6 +66,7 @@ app.use('/api/sales', salesRoutes);
 app.use('/api/inpatients', inpatientRoutes);
 app.use('/api/lab-payments', labPaymentRoutes);
 app.use('/api/revenue', revenueRoutes);
+app.use('/api/lab-test-categories', labTestCategoryRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

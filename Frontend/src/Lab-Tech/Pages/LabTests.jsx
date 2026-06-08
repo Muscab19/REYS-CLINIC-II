@@ -24,7 +24,8 @@ import {
   Save,
   FileText,
   PlusCircle,
-  Trash2 as TrashIcon
+  Trash2 as TrashIcon,
+  RefreshCw
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -34,18 +35,7 @@ import logo from '../../assets/logo.png';
 const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || (isLocal ? 'http://localhost:3000' : 'https://reysclinic.com');
 
-// Test Categories
-const testCategories = [
-  { id: 'hematology', name: 'Hematology', icon: <Droplet className="w-4 h-4" /> },
-  { id: 'biochemistry', name: 'Biochemistry', icon: <FlaskConical className="w-4 h-4" /> },
-  { id: 'microbiology', name: 'Microbiology', icon: <Microscope className="w-4 h-4" /> },
-  { id: 'immunology', name: 'Immunology', icon: <Activity className="w-4 h-4" /> },
-  { id: 'urinalysis', name: 'Urinalysis', icon: <Droplet className="w-4 h-4" /> },
-  { id: 'endocrinology', name: 'Endocrinology', icon: <Brain className="w-4 h-4" /> },
-  { id: 'molecular', name: 'Molecular', icon: <Microscope className="w-4 h-4" /> },
-  { id: 'toxicology', name: 'Toxicology', icon: <AlertCircle className="w-4 h-4" /> }
-];
-
+// Result Types
 const resultTypes = [
   { id: 'quantitative', name: 'Quantitative', description: 'Numeric value with normal range' },
   { id: 'qualitative', name: 'Qualitative', description: 'Positive/Negative, Reactive/Non-reactive' },
@@ -79,6 +69,7 @@ const LabTests = () => {
   const navigate = useNavigate();
   const { user, isAuthenticated, logout } = useAuth();
   const [labTests, setLabTests] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
@@ -88,8 +79,11 @@ const LabTests = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
+  const [addSuccess, setAddSuccess] = useState(false);
   const [stats, setStats] = useState({
     total: 0,
     active: 0,
@@ -113,6 +107,12 @@ const LabTests = () => {
   });
   
   const [editTest, setEditTest] = useState(null);
+  
+  const [categoryForm, setCategoryForm] = useState({
+    name: '',
+    color: '#6366f1',
+    isActive: true
+  });
 
   // Check if user is lab technician
   useEffect(() => {
@@ -126,9 +126,10 @@ const LabTests = () => {
     }
   }, [user, isAuthenticated, navigate]);
 
-  // Load lab tests from API
+  // Load data
   useEffect(() => {
     fetchLabTests();
+    fetchCategories();
   }, []);
 
   const fetchLabTests = async () => {
@@ -154,13 +155,163 @@ const LabTests = () => {
     }
   };
 
+  const fetchCategories = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/lab-test-categories`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (data.success) {
+        setCategories(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    }
+  };
+
   const calculateStats = (testsList) => {
-    const uniqueCategories = new Set(testsList.map(t => t.category));
+    const uniqueCategories = new Set(testsList.map(t => t.categoryName || t.category?.name));
     setStats({
       total: testsList.length,
       active: testsList.filter(t => t.isActive !== false).length,
       categories: uniqueCategories.size
     });
+  };
+
+  // Category Management Functions
+  const handleAddCategory = async () => {
+  if (!categoryForm.name) {
+    toast.error('Category name is required');
+    return;
+  }
+  
+  try {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_BASE_URL}/api/lab-test-categories`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: categoryForm.name,
+        color: categoryForm.color,
+        isActive: categoryForm.isActive
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      // Show success message
+      toast.success('Category added successfully!');
+      setAddSuccess(true);
+      
+      // Clear the form for another entry
+      setCategoryForm({
+        name: '',
+        color: '#6366f1',
+        isActive: true
+      });
+      
+      // Refresh the categories list
+      fetchCategories();
+      
+      // Auto-hide success message after 3 seconds
+      setTimeout(() => {
+        setAddSuccess(false);
+      }, 3000);
+      
+      // Focus the name input for next entry
+      setTimeout(() => {
+        const nameInput = document.querySelector('#categoryNameInput');
+        if (nameInput) nameInput.focus();
+      }, 100);
+    } else {
+      toast.error(data.msg || 'Failed to add category');
+      setAddSuccess(false);
+    }
+  } catch (error) {
+    console.error('Error adding category:', error);
+    toast.error('Failed to add category');
+    setAddSuccess(false);
+  }
+};
+
+  const handleUpdateCategory = async () => {
+    if (!editingCategory) return;
+    
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/lab-test-categories/${editingCategory._id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(categoryForm)
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success('Category updated successfully');
+        fetchCategories();
+        fetchLabTests(); // Refresh tests to update category names
+        setShowCategoryModal(false);
+        setEditingCategory(null);
+        setCategoryForm({
+          name: '',
+          description: '',
+          icon: 'microscope',
+          color: '#6366f1',
+          displayOrder: 0,
+          isActive: true
+        });
+      } else {
+        toast.error(data.msg || 'Failed to update category');
+      }
+    } catch (error) {
+      console.error('Error updating category:', error);
+      toast.error('Failed to update category');
+    }
+  };
+
+  const handleDeleteCategory = async (category) => {
+    if (!confirm(`Delete category "${category.name}"? This will also delete all tests in this category.`)) return;
+    
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/lab-test-categories/${category._id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success('Category deleted successfully');
+        fetchCategories();
+        fetchLabTests();
+      } else {
+        toast.error(data.msg || 'Failed to delete category');
+      }
+    } catch (error) {
+      console.error('Error deleting category:', error);
+      toast.error('Failed to delete category');
+    }
+  };
+
+  const openEditCategoryModal = (category) => {
+    setEditingCategory(category);
+    setAddSuccess(false);
+    setCategoryForm({
+      name: category.name,
+      color: category.color || '#6366f1',
+      isActive: category.isActive !== false
+    });
+    setShowCategoryModal(true);
   };
 
   // Parameter management functions for Add Modal
@@ -409,7 +560,6 @@ const LabTests = () => {
       } else if (editTest.resultType === 'categorical') {
         editData.categoricalOptions = editTest.categoricalOptions;
       } else if (editTest.resultType === 'multi') {
-        // Clean up parameters - remove tempId if present
         const cleanParameters = (editTest.parameters || []).map(param => {
           const { tempId, ...cleanParam } = param;
           return cleanParam;
@@ -474,8 +624,10 @@ const LabTests = () => {
   };
 
   const handleEditClick = (test) => {
-    // Deep copy the test data for editing
     const testCopy = JSON.parse(JSON.stringify(test));
+    if (testCopy.category && typeof testCopy.category === 'object') {
+      testCopy.category = testCopy.category._id;
+    }
     setEditTest(testCopy);
     setShowEditModal(true);
   };
@@ -507,12 +659,19 @@ const LabTests = () => {
     return test.normalRange || 'N/A';
   };
 
+  const getCategoryName = (test) => {
+    if (test.categoryName) return test.categoryName;
+    if (test.category && typeof test.category === 'object') return test.category.name;
+    return 'Unknown';
+  };
+
   const filteredTests = labTests.filter(test => {
+    const categoryName = getCategoryName(test);
     const matchesSearch = 
       test.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       test.code?.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesCategory = filterCategory === 'all' || test.category === filterCategory;
+    const matchesCategory = filterCategory === 'all' || test.category === filterCategory || categoryName === filterCategory;
     const matchesStatus = filterStatus === 'all' || 
       (filterStatus === 'active' && test.isActive !== false) ||
       (filterStatus === 'inactive' && test.isActive === false);
@@ -531,7 +690,7 @@ const LabTests = () => {
   const handleExport = () => {
     const data = filteredTests.map(test => ({
       'Test Name': test.name,
-      'Category': test.category,
+      'Category': getCategoryName(test),
       'Result Type': test.resultType,
       'Normal Range/Settings': formatRangeDisplay(test),
       'Price': test.price,
@@ -566,7 +725,9 @@ const LabTests = () => {
     );
   }
 
-  const getCategoryBadge = (category) => {
+  const getCategoryBadge = (test) => {
+    const categoryName = getCategoryName(test);
+    const category = categories.find(c => c.name === categoryName);
     const colors = {
       hematology: 'bg-blue-100 text-blue-700',
       biochemistry: 'bg-green-100 text-green-700',
@@ -577,7 +738,7 @@ const LabTests = () => {
       molecular: 'bg-indigo-100 text-indigo-700',
       toxicology: 'bg-red-100 text-red-700'
     };
-    return <span className={`px-2 py-1 rounded-full text-xs font-semibold ${colors[category] || 'bg-gray-100 text-gray-700'}`}>{category}</span>;
+    return <span className={`px-2 py-1 rounded-full text-xs font-semibold ${colors[categoryName?.toLowerCase()] || 'bg-gray-100 text-gray-700'}`}>{categoryName}</span>;
   };
 
   const getResultTypeBadge = (type) => {
@@ -589,6 +750,22 @@ const LabTests = () => {
       multi: 'bg-indigo-100 text-indigo-700'
     };
     return <span className={`px-2 py-1 rounded-full text-xs font-semibold ${colors[type] || 'bg-gray-100'}`}>{type || 'N/A'}</span>;
+  };
+
+  const getIconFromName = (iconName) => {
+    const icons = {
+      microscope: '🔬',
+      droplet: '💧',
+      flask: '🧪',
+      brain: '🧠',
+      activity: '📊',
+      'test-tube': '🧫',
+      dna: '🧬',
+      virus: '🦠',
+      blood: '🩸',
+      urine: '💛'
+    };
+    return icons[iconName] || '🔬';
   };
 
   return (
@@ -626,6 +803,22 @@ const LabTests = () => {
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Test</span>
+              </button>
+              <button
+                onClick={() => {
+                  setEditingCategory(null);
+                  setAddSuccess(false);
+                  setCategoryForm({
+                    name: '',
+                    color: '#6366f1',
+                    isActive: true
+                  });
+                  setShowCategoryModal(true);
+                }}
+                className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>Manage Categories</span>
               </button>
               <button
                 onClick={handleLogout}
@@ -704,8 +897,8 @@ const LabTests = () => {
               className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#D01A2B]"
             >
               <option value="all">All Categories</option>
-              {testCategories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              {categories.map(cat => (
+                <option key={cat._id} value={cat.name}>{cat.name}</option>
               ))}
             </select>
             <select
@@ -755,7 +948,7 @@ const LabTests = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4">
-                          {getCategoryBadge(test.category)}
+                          {getCategoryBadge(test)}
                         </td>
                         <td className="px-6 py-4">
                           {getResultTypeBadge(test.resultType)}
@@ -841,7 +1034,173 @@ const LabTests = () => {
         </div>
       </div>
 
-      {/* Add Test Modal - With Multi-Parameter Support */}
+      {/* Category Management Modal */}
+{showCategoryModal && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+      <div className="sticky top-0 bg-white border-b p-5 flex justify-between items-center">
+        <div>
+          <h3 className="text-xl font-bold text-gray-900">
+            {editingCategory ? 'Edit Category' : 'Add New Category'}
+          </h3>
+          <p className="text-sm text-gray-500 mt-1">Manage lab test categories</p>
+        </div>
+        <button onClick={() => {
+          setShowCategoryModal(false);
+          setEditingCategory(null);
+          setCategoryForm({
+            name: '',
+            color: '#6366f1',
+            isActive: true
+          });
+        }} className="p-2 hover:bg-gray-100 rounded-full">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+      
+      <div className="p-6 space-y-6">
+        {/* Category Form - Simplified */}
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Category Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={categoryForm.name}
+              onChange={(e) => setCategoryForm({...categoryForm, name: e.target.value})}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]"
+              placeholder="e.g., Hematology, Biochemistry"
+              autoFocus={!editingCategory}
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Color</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={categoryForm.color}
+                onChange={(e) => setCategoryForm({...categoryForm, color: e.target.value})}
+                className="w-12 h-12 rounded-lg border border-gray-300 cursor-pointer"
+              />
+              <input
+                type="text"
+                value={categoryForm.color}
+                onChange={(e) => setCategoryForm({...categoryForm, color: e.target.value})}
+                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg"
+                placeholder="#6366f1"
+              />
+            </div>
+          </div>
+        </div>
+        
+        {/* Success Message - Shows temporarily after successful add */}
+        {addSuccess && (
+          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded-lg flex items-center gap-2">
+            <CheckCircle className="w-4 h-4" />
+            <span className="text-sm">Category added successfully!</span>
+          </div>
+        )}
+        
+        {/* Action Buttons */}
+        <div className="flex space-x-3 pt-4 border-t">
+          <button
+            onClick={() => {
+              setShowCategoryModal(false);
+              setEditingCategory(null);
+              setCategoryForm({
+                name: '',
+                color: '#6366f1',
+                isActive: true
+              });
+              setAddSuccess(false);
+            }}
+            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Close
+          </button>
+          {editingCategory ? (
+            <button
+              onClick={handleUpdateCategory}
+              className="flex-1 px-4 py-2.5 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 flex items-center justify-center gap-2"
+            >
+              <Save className="w-4 h-4" />
+              Update Category
+            </button>
+          ) : (
+            <button
+              onClick={handleAddCategory}
+              className="flex-1 px-4 py-2.5 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 flex items-center justify-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Another
+            </button>
+          )}
+        </div>
+        
+        {/* Existing Categories List */}
+        {categories.length > 0 && (
+          <div className="border-t pt-4">
+            <div className="flex justify-between items-center mb-3">
+              <h4 className="text-sm font-semibold text-gray-700">Existing Categories ({categories.length})</h4>
+              <button
+                onClick={fetchCategories}
+                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Refresh
+              </button>
+            </div>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {categories.map(cat => (
+                <div key={cat._id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full border shadow-sm" style={{ backgroundColor: cat.color }}></div>
+                    <div>
+                      <p className="font-semibold text-gray-900">{cat.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {cat.isActive !== false ? 'Active' : 'Inactive'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openEditCategoryModal(cat)}
+                      className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                      title="Edit Category"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCategory(cat)}
+                      className="p-1 text-red-600 hover:bg-red-50 rounded transition-colors"
+                      title="Delete Category"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Quick tip for bulk adding */}
+        {!editingCategory && (
+          <div className="bg-blue-50 rounded-lg p-3 mt-2">
+            <p className="text-xs text-blue-700 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              Tip: After adding a category, the form will clear automatically so you can add another one quickly.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+      {/* Add Test Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -850,7 +1209,7 @@ const LabTests = () => {
                 <h3 className="text-xl font-bold text-gray-900">Add New Lab Test</h3>
                 <p className="text-sm text-gray-500 mt-1">Configure test parameters and result options</p>
               </div>
-              <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+              <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-gray-100 rounded-full">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -868,7 +1227,7 @@ const LabTests = () => {
                       type="text"
                       value={newTest.name}
                       onChange={(e) => setNewTest({...newTest, name: e.target.value})}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:border-transparent transition-all"
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]"
                       placeholder="Enter test name (e.g., Complete Blood Count, Stool Examination)"
                     />
                   </div>
@@ -880,11 +1239,11 @@ const LabTests = () => {
                     <select
                       value={newTest.category}
                       onChange={(e) => setNewTest({...newTest, category: e.target.value})}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:border-transparent"
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]"
                     >
                       <option value="">Select Category</option>
-                      {testCategories.map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      {categories.map(cat => (
+                        <option key={cat._id} value={cat._id}>{cat.name}</option>
                       ))}
                     </select>
                   </div>
@@ -908,7 +1267,7 @@ const LabTests = () => {
                           parameters: []
                         });
                       }}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B] focus:border-transparent"
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]"
                     >
                       {resultTypes.map(type => (
                         <option key={type.id} value={type.id}>{type.name}</option>
@@ -921,20 +1280,443 @@ const LabTests = () => {
                 </div>
               </div>
 
-              {/* Rest of Add Modal content remains the same */}
-              {/* ... (keep the existing result type specific fields from your original code) ... */}
+              {/* Result Configuration based on type */}
+              <div className="space-y-4">
+                <h4 className="text-base font-semibold text-gray-800 border-b pb-2">Result Configuration</h4>
+                
+                {/* Quantitative Fields */}
+                {(newTest.resultType === 'quantitative') && (
+                  <div className="bg-blue-50 p-5 rounded-lg space-y-4">
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Normal Range (Min) <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={newTest.normalRangeMin}
+                          onChange={(e) => setNewTest({...newTest, normalRangeMin: e.target.value})}
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
+                          placeholder="e.g., 4.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Normal Range (Max) <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={newTest.normalRangeMax}
+                          onChange={(e) => setNewTest({...newTest, normalRangeMax: e.target.value})}
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
+                          placeholder="e.g., 11.0"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Unit</label>
+                      <input
+                        type="text"
+                        value={newTest.unit}
+                        onChange={(e) => setNewTest({...newTest, unit: e.target.value})}
+                        className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
+                        placeholder="e.g., K/uL, mg/dL, g/L"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Qualitative Fields */}
+                {newTest.resultType === 'qualitative' && (
+                  <div className="bg-green-50 p-5 rounded-lg">
+                    <label className="block text-sm font-semibold text-gray-700 mb-3">
+                      Available Options <span className="text-red-500">*</span>
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {qualitativeOptionsList.map(option => (
+                        <label key={option} className="flex items-center space-x-2 p-2 bg-white rounded-lg border cursor-pointer hover:bg-gray-50">
+                          <input
+                            type="checkbox"
+                            checked={newTest.qualitativeOptions.includes(option)}
+                            onChange={(e) => {
+                              let options = [...newTest.qualitativeOptions];
+                              if (e.target.checked) {
+                                options.push(option);
+                              } else {
+                                options = options.filter(o => o !== option);
+                              }
+                              setNewTest({...newTest, qualitativeOptions: options});
+                            }}
+                            className="rounded text-[#D01A2B] focus:ring-[#D01A2B]"
+                          />
+                          <span className="text-sm">{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Semi-Quantitative Fields */}
+                {newTest.resultType === 'semi-quantitative' && (
+                  <div className="bg-orange-50 p-5 rounded-lg">
+                    <label className="block text-sm font-semibold text-gray-700 mb-3">
+                      Available Options <span className="text-red-500">*</span>
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {semiQuantitativeOptionsList.map(option => (
+                        <label key={option} className="flex items-center space-x-2 p-2 bg-white rounded-lg border cursor-pointer hover:bg-gray-50">
+                          <input
+                            type="checkbox"
+                            checked={newTest.semiQuantitativeOptions.includes(option)}
+                            onChange={(e) => {
+                              let options = [...newTest.semiQuantitativeOptions];
+                              if (e.target.checked) {
+                                options.push(option);
+                              } else {
+                                options = options.filter(o => o !== option);
+                              }
+                              setNewTest({...newTest, semiQuantitativeOptions: options});
+                            }}
+                            className="rounded text-[#D01A2B] focus:ring-[#D01A2B]"
+                          />
+                          <span className="text-sm">{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Categorical Fields */}
+                {newTest.resultType === 'categorical' && (
+                  <div className="bg-cyan-50 p-5 rounded-lg">
+                    <label className="block text-sm font-semibold text-gray-700 mb-3">
+                      Custom Categories <span className="text-red-500">*</span>
+                    </label>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {newTest.categoricalOptions.map((option, idx) => (
+                        <span key={idx} className="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-full text-sm flex items-center gap-2">
+                          {option}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newOptions = newTest.categoricalOptions.filter((_, i) => i !== idx);
+                              setNewTest({...newTest, categoricalOptions: newOptions});
+                            }}
+                            className="text-blue-500 hover:text-blue-700"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        id="categoryInput"
+                        placeholder="Add category (e.g., Normal, Abnormal, High, Low)"
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const input = e.target;
+                            const value = input.value.trim();
+                            if (value && !newTest.categoricalOptions.includes(value)) {
+                              setNewTest({
+                                ...newTest,
+                                categoricalOptions: [...newTest.categoricalOptions, value]
+                              });
+                              input.value = '';
+                            }
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const input = document.getElementById('categoryInput');
+                          const value = input?.value.trim();
+                          if (value && !newTest.categoricalOptions.includes(value)) {
+                            setNewTest({
+                              ...newTest,
+                              categoricalOptions: [...newTest.categoricalOptions, value]
+                            });
+                            input.value = '';
+                          }
+                        }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Multi-Parameter Fields */}
+                {newTest.resultType === 'multi' && (
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-sm font-semibold text-gray-700">
+                        Test Parameters <span className="text-red-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleAddParameter}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700"
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                        Add Parameter
+                      </button>
+                    </div>
+                    
+                    {newTest.parameters.length === 0 && (
+                      <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
+                        <TestTube className="w-12 h-12 mx-auto text-gray-400 mb-2" />
+                        <p className="text-gray-500">No parameters added yet</p>
+                        <p className="text-xs text-gray-400">Click "Add Parameter" to add test components</p>
+                      </div>
+                    )}
+                    
+                    {newTest.parameters.map((param) => (
+                      <div key={param.id} className="border rounded-lg p-4 bg-gray-50">
+                        <div className="flex justify-between items-center mb-3">
+                          <h5 className="font-semibold text-gray-800">Parameter</h5>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveParameter(param.id)}
+                            className="text-red-500 hover:text-red-700"
+                          >
+                            <TrashIcon className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="col-span-2">
+                            <label className="block text-xs font-semibold text-gray-600 mb-1">Parameter Name *</label>
+                            <input
+                              type="text"
+                              value={param.name}
+                              onChange={(e) => handleParameterChange(param.id, 'name', e.target.value)}
+                              className="w-full px-3 py-2 border rounded-lg text-sm"
+                              placeholder="e.g., Color, Consistency, Pus Cells"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1">Result Type *</label>
+                            <select
+                              value={param.resultType}
+                              onChange={(e) => handleParameterChange(param.id, 'resultType', e.target.value)}
+                              className="w-full px-3 py-2 border rounded-lg text-sm"
+                            >
+                              {parameterTypes.map(pt => (
+                                <option key={pt.id} value={pt.id}>{pt.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          
+                          {param.resultType === 'quantitative' && (
+                            <>
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-600 mb-1">Min Range</label>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={param.normalRangeMin}
+                                  onChange={(e) => handleParameterChange(param.id, 'normalRangeMin', e.target.value)}
+                                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                                  placeholder="Min"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-600 mb-1">Max Range</label>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={param.normalRangeMax}
+                                  onChange={(e) => handleParameterChange(param.id, 'normalRangeMax', e.target.value)}
+                                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                                  placeholder="Max"
+                                />
+                              </div>
+                              <div className="col-span-2">
+                                <label className="block text-xs font-semibold text-gray-600 mb-1">Unit</label>
+                                <input
+                                  type="text"
+                                  value={param.unit}
+                                  onChange={(e) => handleParameterChange(param.id, 'unit', e.target.value)}
+                                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                                  placeholder="e.g., HPF, mg/dL"
+                                />
+                              </div>
+                            </>
+                          )}
+                          
+                          {param.resultType === 'qualitative' && (
+                            <div className="col-span-2">
+                              <label className="block text-xs font-semibold text-gray-600 mb-1">Options *</label>
+                              <div className="grid grid-cols-3 gap-2">
+                                {qualitativeOptionsList.map(opt => (
+                                  <label key={opt} className="flex items-center gap-1 text-xs">
+                                    <input
+                                      type="checkbox"
+                                      checked={(param.qualitativeOptions || []).includes(opt)}
+                                      onChange={() => handleParameterOptionToggle(param.id, opt, 'qualitativeOptions')}
+                                      className="rounded text-indigo-600"
+                                    />
+                                    <span>{opt}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {param.resultType === 'semi-quantitative' && (
+                            <div className="col-span-2">
+                              <label className="block text-xs font-semibold text-gray-600 mb-1">Options *</label>
+                              <div className="grid grid-cols-3 gap-2">
+                                {semiQuantitativeOptionsList.map(opt => (
+                                  <label key={opt} className="flex items-center gap-1 text-xs">
+                                    <input
+                                      type="checkbox"
+                                      checked={(param.semiQuantitativeOptions || []).includes(opt)}
+                                      onChange={() => handleParameterOptionToggle(param.id, opt, 'semiQuantitativeOptions')}
+                                      className="rounded text-indigo-600"
+                                    />
+                                    <span>{opt}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {param.resultType === 'categorical' && (
+                            <div className="col-span-2">
+                              <label className="block text-xs font-semibold text-gray-600 mb-1">Custom Categories *</label>
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {(param.categoricalOptions || []).map((opt, oIdx) => (
+                                  <span key={oIdx} className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs flex items-center gap-1">
+                                    {opt}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newOptions = (param.categoricalOptions || []).filter((_, i) => i !== oIdx);
+                                        handleParameterChange(param.id, 'categoricalOptions', newOptions);
+                                      }}
+                                      className="text-blue-500"
+                                    >
+                                      <X className="w-2 h-2" />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  id={`paramCatInput_${param.id}`}
+                                  placeholder="Add category..."
+                                  className="flex-1 px-3 py-1.5 border rounded-lg text-sm"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      const input = e.target;
+                                      const value = input.value.trim();
+                                      if (value && !(param.categoricalOptions || []).includes(value)) {
+                                        handleParameterChange(param.id, 'categoricalOptions', [...(param.categoricalOptions || []), value]);
+                                        input.value = '';
+                                      }
+                                    }
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const input = document.getElementById(`paramCatInput_${param.id}`);
+                                    const value = input?.value.trim();
+                                    if (value && !(param.categoricalOptions || []).includes(value)) {
+                                      handleParameterChange(param.id, 'categoricalOptions', [...(param.categoricalOptions || []), value]);
+                                      input.value = '';
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm"
+                                >
+                                  Add
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Pricing & Logistics */}
+              <div className="space-y-4">
+                <h4 className="text-base font-semibold text-gray-800 border-b pb-2">Pricing & Logistics</h4>
+                <div className="grid grid-cols-2 gap-5">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Price ($) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={newTest.price}
+                      onChange={(e) => setNewTest({...newTest, price: e.target.value})}
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Turnaround Time</label>
+                    <input
+                      type="text"
+                      value={newTest.turnaroundTime}
+                      onChange={(e) => setNewTest({...newTest, turnaroundTime: e.target.value})}
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
+                      placeholder="e.g., 24 hours"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Preview Section */}
+              {newTest.resultType === 'quantitative' && newTest.normalRangeMin && newTest.normalRangeMax && (
+                <div className="bg-blue-100 p-4 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>Preview:</strong> Normal range will be displayed as "{newTest.normalRangeMin} - {newTest.normalRangeMax} {newTest.unit}"
+                  </p>
+                </div>
+              )}
+              
+              {(newTest.resultType === 'qualitative' && newTest.qualitativeOptions.length > 0) && (
+                <div className="bg-green-100 p-4 rounded-lg">
+                  <p className="text-sm text-green-800">
+                    <strong>Preview:</strong> Results can be: {newTest.qualitativeOptions.join(', ')}
+                  </p>
+                </div>
+              )}
+
+              {(newTest.resultType === 'multi' && newTest.parameters.length > 0) && (
+                <div className="bg-indigo-100 p-4 rounded-lg">
+                  <p className="text-sm text-indigo-800">
+                    <strong>Preview:</strong> Multi-parameter test with {newTest.parameters.length} parameter(s)
+                  </p>
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex space-x-3 pt-4 border-t">
                 <button 
                   onClick={() => setShowAddModal(false)} 
-                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   Cancel
                 </button>
                 <button 
                   onClick={handleAddTest} 
-                  className="flex-1 px-4 py-2.5 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-2.5 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 flex items-center justify-center gap-2"
                 >
                   <Save className="w-4 h-4" />
                   Add Test
@@ -945,7 +1727,7 @@ const LabTests = () => {
         </div>
       )}
 
-      {/* Edit Test Modal - Full featured with all fields including multi-parameter */}
+      {/* Edit Test Modal */}
       {showEditModal && editTest && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -965,9 +1747,7 @@ const LabTests = () => {
                 <h4 className="text-base font-semibold text-gray-800 border-b pb-2">Basic Information</h4>
                 <div className="grid grid-cols-2 gap-5">
                   <div className="col-span-2">
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Test Name <span className="text-red-500">*</span>
-                    </label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Test Name *</label>
                     <input
                       type="text"
                       value={editTest.name || ''}
@@ -976,23 +1756,20 @@ const LabTests = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Category <span className="text-red-500">*</span>
-                    </label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Category *</label>
                     <select
                       value={editTest.category || ''}
                       onChange={(e) => setEditTest({...editTest, category: e.target.value})}
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
                     >
-                      {testCategories.map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      <option value="">Select Category</option>
+                      {categories.map(cat => (
+                        <option key={cat._id} value={cat._id}>{cat.name}</option>
                       ))}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Result Type <span className="text-red-500">*</span>
-                    </label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Result Type *</label>
                     <select
                       value={editTest.resultType || 'quantitative'}
                       onChange={(e) => {
@@ -1000,7 +1777,6 @@ const LabTests = () => {
                         setEditTest({
                           ...editTest,
                           resultType: newResultType,
-                          // Reset type-specific fields when changing result type
                           normalRangeMin: '',
                           normalRangeMax: '',
                           qualitativeOptions: [],
@@ -1015,45 +1791,35 @@ const LabTests = () => {
                         <option key={type.id} value={type.id}>{type.name}</option>
                       ))}
                     </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {resultTypes.find(t => t.id === editTest.resultType)?.description}
-                    </p>
                   </div>
                 </div>
               </div>
 
-              {/* Result Configuration based on type */}
+              {/* Result Configuration */}
               <div className="space-y-4">
                 <h4 className="text-base font-semibold text-gray-800 border-b pb-2">Result Configuration</h4>
                 
-                {/* Quantitative Fields */}
-                {(editTest.resultType === 'quantitative') && (
+                {editTest.resultType === 'quantitative' && (
                   <div className="bg-blue-50 p-5 rounded-lg space-y-4">
                     <div className="grid grid-cols-2 gap-5">
                       <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          Normal Range (Min) <span className="text-red-500">*</span>
-                        </label>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">Normal Range (Min)</label>
                         <input
                           type="number"
                           step="any"
                           value={editTest.normalRangeMin || ''}
                           onChange={(e) => setEditTest({...editTest, normalRangeMin: e.target.value})}
                           className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
-                          placeholder="e.g., 4.5"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          Normal Range (Max) <span className="text-red-500">*</span>
-                        </label>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">Normal Range (Max)</label>
                         <input
                           type="number"
                           step="any"
                           value={editTest.normalRangeMax || ''}
                           onChange={(e) => setEditTest({...editTest, normalRangeMax: e.target.value})}
                           className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
-                          placeholder="e.g., 11.0"
                         />
                       </div>
                     </div>
@@ -1064,21 +1830,17 @@ const LabTests = () => {
                         value={editTest.unit || ''}
                         onChange={(e) => setEditTest({...editTest, unit: e.target.value})}
                         className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
-                        placeholder="e.g., K/uL, mg/dL, g/L"
                       />
                     </div>
                   </div>
                 )}
 
-                {/* Qualitative Fields */}
                 {editTest.resultType === 'qualitative' && (
                   <div className="bg-green-50 p-5 rounded-lg">
-                    <label className="block text-sm font-semibold text-gray-700 mb-3">
-                      Available Options <span className="text-red-500">*</span>
-                    </label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-3">Available Options</label>
                     <div className="grid grid-cols-3 gap-3">
                       {qualitativeOptionsList.map(option => (
-                        <label key={option} className="flex items-center space-x-2 p-2 bg-white rounded-lg border cursor-pointer hover:bg-gray-50">
+                        <label key={option} className="flex items-center space-x-2 p-2 bg-white rounded-lg border cursor-pointer">
                           <input
                             type="checkbox"
                             checked={(editTest.qualitativeOptions || []).includes(option)}
@@ -1091,25 +1853,21 @@ const LabTests = () => {
                               }
                               setEditTest({...editTest, qualitativeOptions: options});
                             }}
-                            className="rounded text-[#D01A2B] focus:ring-[#D01A2B]"
+                            className="rounded text-[#D01A2B]"
                           />
                           <span className="text-sm">{option}</span>
                         </label>
                       ))}
                     </div>
-                    <p className="text-xs text-gray-500 mt-3">Select all options that are valid results for this test</p>
                   </div>
                 )}
 
-                {/* Semi-Quantitative Fields */}
                 {editTest.resultType === 'semi-quantitative' && (
                   <div className="bg-orange-50 p-5 rounded-lg">
-                    <label className="block text-sm font-semibold text-gray-700 mb-3">
-                      Available Options <span className="text-red-500">*</span>
-                    </label>
-                    <div className="grid grid-cols-4 gap-3">
+                    <label className="block text-sm font-semibold text-gray-700 mb-3">Available Options</label>
+                    <div className="grid grid-cols-3 gap-3">
                       {semiQuantitativeOptionsList.map(option => (
-                        <label key={option} className="flex items-center space-x-2 p-2 bg-white rounded-lg border cursor-pointer hover:bg-gray-50">
+                        <label key={option} className="flex items-center space-x-2 p-2 bg-white rounded-lg border cursor-pointer">
                           <input
                             type="checkbox"
                             checked={(editTest.semiQuantitativeOptions || []).includes(option)}
@@ -1122,7 +1880,7 @@ const LabTests = () => {
                               }
                               setEditTest({...editTest, semiQuantitativeOptions: options});
                             }}
-                            className="rounded text-[#D01A2B] focus:ring-[#D01A2B]"
+                            className="rounded text-[#D01A2B]"
                           />
                           <span className="text-sm">{option}</span>
                         </label>
@@ -1131,12 +1889,9 @@ const LabTests = () => {
                   </div>
                 )}
 
-                {/* Categorical Fields */}
                 {editTest.resultType === 'categorical' && (
                   <div className="bg-cyan-50 p-5 rounded-lg">
-                    <label className="block text-sm font-semibold text-gray-700 mb-3">
-                      Custom Categories <span className="text-red-500">*</span>
-                    </label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-3">Custom Categories</label>
                     <div className="flex flex-wrap gap-2 mb-3">
                       {(editTest.categoricalOptions || []).map((option, idx) => (
                         <span key={idx} className="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-full text-sm flex items-center gap-2">
@@ -1158,8 +1913,8 @@ const LabTests = () => {
                       <input
                         type="text"
                         id="editCategoryInput"
-                        placeholder="Add category (e.g., Normal, Abnormal, High, Low)"
-                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]"
+                        placeholder="Add category..."
+                        className="flex-1 px-4 py-2 border rounded-lg"
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
@@ -1186,11 +1941,9 @@ const LabTests = () => {
                               categoricalOptions: [...(editTest.categoricalOptions || []), value]
                             });
                             input.value = '';
-                          } else if (value && (editTest.categoricalOptions || []).includes(value)) {
-                            toast.warning('Category already exists');
                           }
                         }}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg"
                       >
                         Add
                       </button>
@@ -1198,13 +1951,10 @@ const LabTests = () => {
                   </div>
                 )}
 
-                {/* Multi-Parameter Fields */}
                 {editTest.resultType === 'multi' && (
                   <div className="space-y-4">
                     <div className="flex justify-between items-center">
-                      <label className="block text-sm font-semibold text-gray-700">
-                        Test Parameters <span className="text-red-500">*</span>
-                      </label>
+                      <label className="block text-sm font-semibold text-gray-700">Test Parameters</label>
                       <button
                         type="button"
                         onClick={handleEditAddParameter}
@@ -1214,14 +1964,6 @@ const LabTests = () => {
                         Add Parameter
                       </button>
                     </div>
-                    
-                    {(editTest.parameters || []).length === 0 && (
-                      <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed">
-                        <TestTube className="w-12 h-12 mx-auto text-gray-400 mb-2" />
-                        <p className="text-gray-500">No parameters added yet</p>
-                        <p className="text-xs text-gray-400">Click "Add Parameter" to add test components</p>
-                      </div>
-                    )}
                     
                     {(editTest.parameters || []).map((param, idx) => (
                       <div key={param.tempId || idx} className="border rounded-lg p-4 bg-gray-50">
@@ -1243,7 +1985,6 @@ const LabTests = () => {
                               value={param.name || ''}
                               onChange={(e) => handleEditParameterChange(idx, 'name', e.target.value)}
                               className="w-full px-3 py-2 border rounded-lg text-sm"
-                              placeholder="e.g., Color, Consistency, Pus Cells"
                             />
                           </div>
                           <div>
@@ -1259,7 +2000,6 @@ const LabTests = () => {
                             </select>
                           </div>
                           
-                          {/* Parameter Quantitative Fields */}
                           {param.resultType === 'quantitative' && (
                             <>
                               <div>
@@ -1270,7 +2010,6 @@ const LabTests = () => {
                                   value={param.normalRangeMin || ''}
                                   onChange={(e) => handleEditParameterChange(idx, 'normalRangeMin', e.target.value)}
                                   className="w-full px-3 py-2 border rounded-lg text-sm"
-                                  placeholder="Min"
                                 />
                               </div>
                               <div>
@@ -1281,7 +2020,6 @@ const LabTests = () => {
                                   value={param.normalRangeMax || ''}
                                   onChange={(e) => handleEditParameterChange(idx, 'normalRangeMax', e.target.value)}
                                   className="w-full px-3 py-2 border rounded-lg text-sm"
-                                  placeholder="Max"
                                 />
                               </div>
                               <div className="col-span-2">
@@ -1291,13 +2029,11 @@ const LabTests = () => {
                                   value={param.unit || ''}
                                   onChange={(e) => handleEditParameterChange(idx, 'unit', e.target.value)}
                                   className="w-full px-3 py-2 border rounded-lg text-sm"
-                                  placeholder="e.g., HPF, mg/dL"
                                 />
                               </div>
                             </>
                           )}
                           
-                          {/* Parameter Qualitative Fields */}
                           {param.resultType === 'qualitative' && (
                             <div className="col-span-2">
                               <label className="block text-xs font-semibold text-gray-600 mb-1">Options *</label>
@@ -1317,11 +2053,10 @@ const LabTests = () => {
                             </div>
                           )}
                           
-                          {/* Parameter Semi-Quantitative Fields */}
                           {param.resultType === 'semi-quantitative' && (
                             <div className="col-span-2">
                               <label className="block text-xs font-semibold text-gray-600 mb-1">Options *</label>
-                              <div className="grid grid-cols-4 gap-2">
+                              <div className="grid grid-cols-3 gap-2">
                                 {semiQuantitativeOptionsList.map(opt => (
                                   <label key={opt} className="flex items-center gap-1 text-xs">
                                     <input
@@ -1337,7 +2072,6 @@ const LabTests = () => {
                             </div>
                           )}
                           
-                          {/* Parameter Categorical Fields */}
                           {param.resultType === 'categorical' && (
                             <div className="col-span-2">
                               <label className="block text-xs font-semibold text-gray-600 mb-1">Custom Categories *</label>
@@ -1405,16 +2139,13 @@ const LabTests = () => {
                 <h4 className="text-base font-semibold text-gray-800 border-b pb-2">Pricing & Logistics</h4>
                 <div className="grid grid-cols-2 gap-5">
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Price ($) <span className="text-red-500">*</span>
-                    </label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Price ($) *</label>
                     <input
                       type="number"
                       step="0.01"
                       value={editTest.price || ''}
                       onChange={(e) => setEditTest({...editTest, price: e.target.value})}
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
-                      placeholder="0.00"
                     />
                   </div>
                   <div>
@@ -1424,7 +2155,6 @@ const LabTests = () => {
                       value={editTest.turnaroundTime || '24 hours'}
                       onChange={(e) => setEditTest({...editTest, turnaroundTime: e.target.value})}
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
-                      placeholder="e.g., 24 hours"
                     />
                   </div>
                 </div>
@@ -1433,53 +2163,28 @@ const LabTests = () => {
               {/* Status */}
               <div className="space-y-4">
                 <h4 className="text-base font-semibold text-gray-800 border-b pb-2">Status</h4>
-                <div className="flex items-center space-x-2 pt-2">
+                <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
                     checked={editTest.isActive !== false}
                     onChange={(e) => setEditTest({...editTest, isActive: e.target.checked})}
-                    className="rounded text-[#D01A2B] focus:ring-[#D01A2B]"
+                    className="rounded text-[#D01A2B]"
                   />
-                  <label className="text-sm font-semibold text-gray-700">Active</label>
-                </div>
+                  <span className="text-sm font-semibold text-gray-700">Active</span>
+                </label>
               </div>
-
-              {/* Preview Section */}
-              {editTest.resultType === 'quantitative' && editTest.normalRangeMin && editTest.normalRangeMax && (
-                <div className="bg-blue-100 p-4 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    <strong>Preview:</strong> Normal range will be displayed as "{editTest.normalRangeMin} - {editTest.normalRangeMax} {editTest.unit}"
-                  </p>
-                </div>
-              )}
-              
-              {(editTest.resultType === 'qualitative' && editTest.qualitativeOptions?.length > 0) && (
-                <div className="bg-green-100 p-4 rounded-lg">
-                  <p className="text-sm text-green-800">
-                    <strong>Preview:</strong> Results can be: {editTest.qualitativeOptions.join(', ')}
-                  </p>
-                </div>
-              )}
-
-              {(editTest.resultType === 'multi' && editTest.parameters?.length > 0) && (
-                <div className="bg-indigo-100 p-4 rounded-lg">
-                  <p className="text-sm text-indigo-800">
-                    <strong>Preview:</strong> Multi-parameter test with {editTest.parameters.length} parameter(s)
-                  </p>
-                </div>
-              )}
 
               {/* Action Buttons */}
               <div className="flex space-x-3 pt-4 border-t">
                 <button
                   onClick={() => setShowEditModal(false)}
-                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleEditTest}
-                  className="flex-1 px-4 py-2.5 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-2.5 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 flex items-center justify-center gap-2"
                 >
                   <Save className="w-4 h-4" />
                   Save Changes
@@ -1526,7 +2231,7 @@ const LabTests = () => {
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">{selectedTest.name}</h2>
-                  <p className="text-gray-500 capitalize">{selectedTest.category} • {selectedTest.resultType} Test</p>
+                  <p className="text-gray-500 capitalize">{getCategoryName(selectedTest)} • {selectedTest.resultType} Test</p>
                 </div>
               </div>
               
@@ -1554,7 +2259,6 @@ const LabTests = () => {
                   <p className="text-gray-800">{formatRangeDisplay(selectedTest)}</p>
                 </div>
                 
-                {/* Show parameters if multi-type test */}
                 {selectedTest.resultType === 'multi' && selectedTest.parameters && selectedTest.parameters.length > 0 && (
                   <div className="col-span-2 bg-indigo-50 p-4 rounded-lg">
                     <p className="text-xs text-indigo-600 uppercase font-semibold mb-2">Parameters</p>

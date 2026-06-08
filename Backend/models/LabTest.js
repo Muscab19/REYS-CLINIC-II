@@ -15,21 +15,23 @@ const labTestSchema = new mongoose.Schema({
     uppercase: true
   },
   category: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'LabTestCategory',
+    required: [true, 'Category is required']
+  },
+  categoryName: {
     type: String,
-    required: [true, 'Category is required'],
-    enum: ['hematology', 'biochemistry', 'microbiology', 'immunology', 'urinalysis', 'endocrinology', 'molecular', 'toxicology']
+    default: ''
   },
   description: {
     type: String,
     default: ''
   },
-  // Main result type (can be 'multi' for composite tests)
   resultType: {
     type: String,
     enum: ['quantitative', 'qualitative', 'semi-quantitative', 'categorical', 'text', 'multi'],
     default: 'quantitative'
   },
-  // For quantitative tests (numeric with range)
   normalRangeMin: {
     type: Number,
     default: null
@@ -38,21 +40,17 @@ const labTestSchema = new mongoose.Schema({
     type: Number,
     default: null
   },
-  // For qualitative tests
   qualitativeOptions: [{
     type: String,
     enum: ['Positive', 'Negative', 'Reactive', 'Non-reactive', 'Detected', 'Not Detected', 'Normal', 'Abnormal', 'High', 'Low', 'Critical']
   }],
-  // For semi-quantitative tests
   semiQuantitativeOptions: [{
     type: String,
     enum: ['Negative', 'Trace', '1+', '2+', '3+', '4+', 'Small', 'Moderate', 'Large']
   }],
-  // For categorical results
   categoricalOptions: [{
     type: String
   }],
-  // MULTI-TEST PARAMETERS - For composite tests like Stool Examination
   parameters: [{
     name: {
       type: String,
@@ -70,7 +68,6 @@ const labTestSchema = new mongoose.Schema({
     categoricalOptions: [String],
     unit: String
   }],
-  // Legacy support
   normalRange: {
     type: String,
     default: ''
@@ -107,6 +104,20 @@ const labTestSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Auto-populate category name before save
+labTestSchema.pre('save', async function(next) {
+  if (this.category && (this.isNew || this.isModified('category'))) {
+    const LabTestCategory = mongoose.model('LabTestCategory');
+    const category = await LabTestCategory.findById(this.category);
+    if (category) {
+      this.categoryName = category.name;
+    }
+  }
+  next();
+});
+
 labTestSchema.index({ name: 'text', description: 'text' });
+labTestSchema.index({ category: 1 });
+labTestSchema.index({ isActive: 1 });
 
 module.exports = mongoose.model('LabTest', labTestSchema);

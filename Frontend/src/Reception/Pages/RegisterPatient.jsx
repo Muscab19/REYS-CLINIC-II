@@ -3,7 +3,8 @@ import {
   ArrowLeft, Baby, User, Phone, Mail, MapPin, Heart, 
   CheckCircle, X, Loader, Send, Stethoscope, Microscope, 
   Search, Edit, DollarSign, CreditCard, AlertCircle, 
-  Users, ClipboardList, TestTube, Package, History
+  Users, ClipboardList, TestTube, Package, History, Percent,
+  Ticket, Printer as PrinterIcon, UserPlus as UserPlusIcon
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -15,12 +16,17 @@ const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || (isLocal ? 'http://loca
 
 // Helper function to generate sequential patient ID - SAME FOR BOTH DOCTOR AND LAB
 const generatePatientId = () => {
-  // Get the last patient ID from localStorage
   const lastPatientId = localStorage.getItem('lastPatientId') || '0';
   const nextNumber = parseInt(lastPatientId) + 1;
   localStorage.setItem('lastPatientId', nextNumber.toString());
-  // Format as P-XXXXX (P followed by 5 digits)
   return `P-${nextNumber.toString().padStart(5, '0')}`;
+};
+
+// Helper function to get category name safely
+const getCategoryName = (test) => {
+  if (test.categoryName) return test.categoryName;
+  if (test.category && typeof test.category === 'object') return test.category.name;
+  return 'General';
 };
 
 const RegisterPatient = () => {
@@ -44,6 +50,9 @@ const RegisterPatient = () => {
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [processingPayment, setProcessingPayment] = useState(false);
   const [doctorTicketFee, setDoctorTicketFee] = useState(5);
+  const [discountType, setDiscountType] = useState('percentage');
+  const [discountValue, setDiscountValue] = useState(0);
+  const [discountReason, setDiscountReason] = useState('');
   
   const [formData, setFormData] = useState({
     childName: '',
@@ -82,10 +91,9 @@ const RegisterPatient = () => {
       return;
     }
     if (localStorage.getItem('lastPatientId')) {
-      console.log('Removing legacy patient ID counter from localStorage');
       localStorage.removeItem('lastPatientId');
     }
-        if (localStorage.getItem('patientIdCounter')) {
+    if (localStorage.getItem('patientIdCounter')) {
       localStorage.removeItem('patientIdCounter');
     }
     if (localStorage.getItem('nextPatientNumber')) {
@@ -197,13 +205,16 @@ const RegisterPatient = () => {
         : [...prev.selectedLabTests, testId];
       return { ...prev, selectedLabTests: selected };
     });
+    setDiscountValue(0);
+    setDiscountType('percentage');
+    setDiscountReason('');
   };
 
   const getSelectedTestsDetails = () => {
     return labTests.filter(test => formData.selectedLabTests.includes(test._id));
   };
 
-  const calculateTotalFee = () => {
+  const calculateSubtotal = () => {
     if (selectedDepartment === 'doctor') {
       return doctorTicketFee;
     }
@@ -211,6 +222,23 @@ const RegisterPatient = () => {
       return getSelectedTestsDetails().reduce((sum, t) => sum + (t.price || 0), 0);
     }
     return 0;
+  };
+
+  const calculateDiscountAmount = () => {
+    const subtotal = calculateSubtotal();
+    if (discountValue <= 0) return 0;
+    
+    if (discountType === 'percentage') {
+      return (subtotal * discountValue) / 100;
+    } else {
+      return Math.min(discountValue, subtotal);
+    }
+  };
+
+  const calculateTotalFee = () => {
+    const subtotal = calculateSubtotal();
+    const discountAmount = calculateDiscountAmount();
+    return Math.max(0, subtotal - discountAmount);
   };
 
   const validateForm = () => {
@@ -258,6 +286,9 @@ const RegisterPatient = () => {
       followUpReason: ''
     }));
     setSelectedDepartment(deptId);
+    setDiscountValue(0);
+    setDiscountType('percentage');
+    setDiscountReason('');
   };
 
   const handleEditFee = () => {
@@ -315,137 +346,146 @@ const RegisterPatient = () => {
   };
 
   const handleSubmit = async (isPaid = false) => {
-  if (!validateForm()) return;
-  
-  setLoading(true);
-  
-  try {
-    const token = localStorage.getItem('token');
-    // REMOVED: patientIdNumber generation - let backend handle it
+    if (!validateForm()) return;
     
-    // Calculate total fee based on department
-    let totalFee = 0;
-    let labTestDetails = [];
-    let labTestNames = [];
+    setLoading(true);
     
-    if (selectedDepartment === 'doctor') {
-      totalFee = doctorTicketFee;
-    } else if (selectedDepartment === 'lab-tech') {
-      labTestDetails = labTests.filter(test => formData.selectedLabTests.includes(test._id));
-      totalFee = labTestDetails.reduce((sum, test) => sum + (test.price || 0), 0);
-      labTestNames = labTestDetails.map(test => test.name);
-    }
-    
-    // Create payload WITHOUT patientId - backend will generate it
-    const payload = {
-      childName: formData.childName,
-      childAge: parseInt(formData.childAge),
-      childGender: formData.childGender,
-      parentName: formData.parentName,
-      parentPhone: formData.parentPhone,
-      parentEmail: formData.parentEmail,
-      parentAddress: formData.parentAddress,
-      referredTo: formData.referredTo,
-      assignedDoctor: formData.assignedDoctor,
-      assignedLabTech: formData.assignedLabTech,
-      urgency: formData.urgency,
-      paymentStatus: isPaid ? 'paid' : formData.paymentStatus,
-      paidAmount: isPaid ? totalFee : formData.paidAmount,
-      paymentMethod: isPaid ? paymentMethod : formData.paymentMethod,
-      paymentDate: isPaid ? new Date().toISOString() : null,
-      isFollowUp: formData.isFollowUp,
-      previousConsultationId: formData.previousConsultationId,
-      followUpReason: formData.followUpReason,
-      status: formData.referredTo === 'doctor' ? 'pending' : 'pending',
-      // DO NOT include patientId - let backend generate it
-      ticketFee: totalFee // Store total fee
-    };
-    
-    // Add doctor-specific fields
-    if (formData.referredTo === 'doctor') {
-      payload.visitReason = formData.visitReason;
-      payload.previousVisits = formData.previousVisits;
-    }
-    
-    // Add lab-specific fields
-    if (formData.referredTo === 'lab-tech') {
-      payload.selectedLabTests = formData.selectedLabTests;
-      payload.labTestNotes = formData.labTestNotes;
-      payload.labTestNames = labTestNames;
-    }
-    
-    console.log('Sending payload:', payload);
-    
-    const response = await fetch(`${API_BASE_URL}/api/patients/register-direct`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    }); 
-    
-    const data = await response.json();
-    
-    if (!response.ok) throw new Error(data.msg || 'Failed to register patient');
-    
-    if (data.success) {
-      // The backend will have generated the patientId (format: P-00001, P-00002, etc.)
-      const patientData = { 
-        ...data.data.patient, 
-        // Remove any reference to generatedPatientId - use the one from backend
-        calculatedTotalFee: totalFee,
-        labTestDetails: labTestDetails,
-        labTestNames: labTestNames
-      };
-      setRegisteredPatient(patientData);
-      setShowConfirmation(true);
+    try {
+      const token = localStorage.getItem('token');
       
-      if (isPaid) {
-        toast.success(`Payment of $${totalFee.toFixed(2)} collected! Patient registered.`);
-      } else {
-        toast.success('Patient registered successfully!');
+      let totalFee = calculateTotalFee();
+      const subtotal = calculateSubtotal();
+      const discountAmount = calculateDiscountAmount();
+      
+      let labTestDetails = [];
+      let labTestNames = [];
+      
+      if (selectedDepartment === 'doctor') {
+        totalFee = doctorTicketFee;
+      } else if (selectedDepartment === 'lab-tech') {
+        labTestDetails = getSelectedTestsDetails();
+        labTestNames = labTestDetails.map(test => test.name);
       }
       
-      // Reset form
-      setFormData({
-        childName: '',
-        childAge: '',
-        childGender: '',
-        parentName: '',
-        parentPhone: '',
-        parentEmail: '',
-        parentAddress: '',
-        referredTo: '',
-        assignedDoctor: '',
-        assignedLabTech: '',
-        selectedLabTests: [],
-        labTestNotes: '',
-        visitReason: '',
-        previousVisits: 'no',
-        urgency: 'normal',
-        paymentStatus: 'pending',
-        paidAmount: 0,
-        paymentMethod: 'cash',
-        paymentDate: null,
-        isFollowUp: false,
-        previousConsultationId: '',
-        followUpReason: ''
-      });
-      setSelectedDepartment(null);
+      const payload = {
+        childName: formData.childName,
+        childAge: parseInt(formData.childAge),
+        childGender: formData.childGender,
+        parentName: formData.parentName,
+        parentPhone: formData.parentPhone,
+        parentEmail: formData.parentEmail,
+        parentAddress: formData.parentAddress,
+        referredTo: formData.referredTo,
+        assignedDoctor: formData.assignedDoctor,
+        assignedLabTech: formData.assignedLabTech,
+        urgency: formData.urgency,
+        paymentStatus: isPaid ? 'paid' : formData.paymentStatus,
+        paidAmount: isPaid ? totalFee : formData.paidAmount,
+        paymentMethod: isPaid ? paymentMethod : formData.paymentMethod,
+        paymentDate: isPaid ? new Date().toISOString() : null,
+        isFollowUp: formData.isFollowUp,
+        previousConsultationId: formData.previousConsultationId,
+        followUpReason: formData.followUpReason,
+        status: formData.referredTo === 'doctor' ? 'pending' : 'pending',
+        ticketFee: totalFee,
+        subtotal: subtotal,
+        discountAmount: discountAmount,
+        discountType: discountType,
+        discountValue: discountValue,
+        discountReason: discountReason
+      };
+      
+      if (formData.referredTo === 'doctor') {
+        payload.visitReason = formData.visitReason;
+        payload.previousVisits = formData.previousVisits;
+      }
+      
+      if (formData.referredTo === 'lab-tech') {
+        payload.selectedLabTests = formData.selectedLabTests;
+        payload.labTestNotes = formData.labTestNotes;
+        payload.labTestNames = labTestNames;
+      }
+      
+      console.log('Sending payload:', payload);
+      
+      const response = await fetch(`${API_BASE_URL}/api/patients/register-direct`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      }); 
+      
+      const data = await response.json();
+      
+      if (!response.ok) throw new Error(data.msg || 'Failed to register patient');
+      
+      if (data.success) {
+        const patientData = { 
+          ...data.data.patient, 
+          calculatedTotalFee: totalFee,
+          subtotal: subtotal,
+          discountAmount: discountAmount,
+          discountType: discountType,
+          discountValue: discountValue,
+          discountReason: discountReason,
+          labTestDetails: labTestDetails,
+          labTestNames: labTestNames
+        };
+        setRegisteredPatient(patientData);
+        setShowConfirmation(true);
+        
+        if (isPaid) {
+          toast.success(`Payment of $${totalFee.toFixed(2)} collected! Patient registered.`);
+        } else {
+          toast.success('Patient registered successfully!');
+        }
+        
+        setFormData({
+          childName: '',
+          childAge: '',
+          childGender: '',
+          parentName: '',
+          parentPhone: '',
+          parentEmail: '',
+          parentAddress: '',
+          referredTo: '',
+          assignedDoctor: '',
+          assignedLabTech: '',
+          selectedLabTests: [],
+          labTestNotes: '',
+          visitReason: '',
+          previousVisits: 'no',
+          urgency: 'normal',
+          paymentStatus: 'pending',
+          paidAmount: 0,
+          paymentMethod: 'cash',
+          paymentDate: null,
+          isFollowUp: false,
+          previousConsultationId: '',
+          followUpReason: ''
+        });
+        setSelectedDepartment(null);
+        setDiscountValue(0);
+        setDiscountType('percentage');
+        setDiscountReason('');
+      }
+    } catch (error) {
+      console.error('Registration error:', error);
+      toast.error(error.message || 'Failed to register patient');
+    } finally {
+      setLoading(false);
     }
-  } catch (error) {
-    console.error('Registration error:', error);
-    toast.error(error.message || 'Failed to register patient');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   const handleNewRegistration = () => {
     setShowConfirmation(false);
     setRegisteredPatient(null);
     setSelectedDepartment(null);
+    setDiscountValue(0);
+    setDiscountType('percentage');
+    setDiscountReason('');
   };
 
   const handlePrintReferral = () => {
@@ -466,111 +506,25 @@ const RegisterPatient = () => {
           <title>REYS CLINIC - Patient Referral</title>
           <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { 
-              font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
-              background: #fff;
-              padding: 0;
-              margin: 0;
-            }
-            .report {
-              max-width: 100%;
-              width: 100%;
-              background: white;
-              margin: 0;
-              padding: 0;
-            }
-            .report-content {
-              padding: 20px 25px;
-            }
-            .header {
-              text-align: center;
-              border-bottom: 1px solid #ccc;
-              padding-bottom: 12px;
-              margin-bottom: 18px;
-            }
-            .logo-img {
-              max-width: 180px;
-              height: auto;
-              margin-bottom: 8px;
-            }
-            .clinic-address {
-              font-size: 12px;
-              font-weight: bold;
-              color: #333;
-              margin-top: 5px;
-            }
-            .contact-info {
-              font-size: 12px;
-              font-weight: bold;
-              color: #333;
-            }
-            .info-grid {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 10px;
-              margin-bottom: 18px;
-              padding: 10px;
-              background: #f8f9fa;
-              border: 1px solid #e0e0e0;
-            }
-            .info-row {
-              display: flex;
-              align-items: baseline;
-              font-size: 12px;
-            }
-            .info-label {
-              font-weight: bold;
-              width: 80px;
-              min-width: 80px;
-            }
-            .info-value {
-              color: #212529;
-              font-weight: normal;
-            }
-            .section-title {
-              text-align: center;
-              font-size: 14px;
-              font-weight: bold;
-              text-transform: uppercase;
-              color: #c0392b;
-              margin: 15px 0;
-              padding: 8px;
-              background: #f1f3f5;
-              border: 1px solid #e0e0e0;
-            }
-            .badge {
-              display: inline-block;
-              padding: 2px 8px;
-              border-radius: 12px;
-              font-size: 11px;
-              font-weight: bold;
-            }
+            body { font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif; background: #fff; padding: 0; margin: 0; }
+            .report { max-width: 100%; width: 100%; background: white; margin: 0; padding: 0; }
+            .report-content { padding: 20px 25px; }
+            .header { text-align: center; border-bottom: 1px solid #ccc; padding-bottom: 12px; margin-bottom: 18px; }
+            .logo-img { max-width: 180px; height: auto; margin-bottom: 8px; }
+            .clinic-address { font-size: 12px; font-weight: bold; color: #333; margin-top: 5px; }
+            .contact-info { font-size: 12px; font-weight: bold; color: #333; }
+            .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; padding: 10px; background: #f8f9fa; border: 1px solid #e0e0e0; }
+            .info-row { display: flex; align-items: baseline; font-size: 12px; }
+            .info-label { font-weight: bold; width: 80px; min-width: 80px; }
+            .info-value { color: #212529; font-weight: normal; }
+            .section-title { text-align: center; font-size: 14px; font-weight: bold; text-transform: uppercase; color: #c0392b; margin: 15px 0; padding: 8px; background: #f1f3f5; border: 1px solid #e0e0e0; }
+            .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
             .badge-urgent { background: #fee2e2; color: #dc2626; }
             .badge-normal { background: #dcfce7; color: #16a34a; }
-            .tests-list {
-              margin-top: 10px;
-              padding: 8px;
-              background: #f9f9f9;
-              border-radius: 4px;
-            }
-            .test-item {
-              font-size: 11px;
-              padding: 4px 0;
-              border-bottom: 1px dotted #ddd;
-            }
-            .footer {
-              margin-top: 20px;
-              padding: 10px;
-              text-align: center;
-              font-size: 10px;
-              color: #666;
-              border-top: 1px solid #ccc;
-            }
-            @media print {
-              body { padding: 0; margin: 0; }
-              .report { box-shadow: none; margin: 0; }
-              .report-content { padding: 15px 20px; }
-            }
+            .tests-list { margin-top: 10px; padding: 8px; background: #f9f9f9; border-radius: 4px; }
+            .test-item { font-size: 11px; padding: 4px 0; border-bottom: 1px dotted #ddd; }
+            .footer { margin-top: 20px; padding: 10px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #ccc; }
+            @media print { body { padding: 0; margin: 0; } .report { box-shadow: none; margin: 0; } .report-content { padding: 15px 20px; } }
           </style>
         </head>
         <body>
@@ -635,18 +589,14 @@ const RegisterPatient = () => {
     const shortTicketId = registeredPatient.generatedPatientId || registeredPatient.patientId || `P-${Math.floor(Math.random() * 100000)}`;
     const refNo = `#${Math.floor(Math.random() * 100000)}`;
     
-    // Get the paid amount - prioritize calculatedTotalFee for lab tests
     let paidAmount = registeredPatient.paidAmount || 0;
-    
-    // If paidAmount is 0 but this is a lab patient, try to get the total from ticketFee or calculatedTotalFee
     if (paidAmount === 0 && registeredPatient.referredTo === 'lab-tech') {
       paidAmount = registeredPatient.ticketFee || registeredPatient.calculatedTotalFee || 0;
     }
     
-    // If still 0, calculate from lab test details if available
-    if (paidAmount === 0 && registeredPatient.labTestDetails && registeredPatient.labTestDetails.length > 0) {
-      paidAmount = registeredPatient.labTestDetails.reduce((sum, test) => sum + (test.price || 0), 0);
-    }
+    const subtotal = registeredPatient.subtotal || paidAmount;
+    const discountAmount = registeredPatient.discountAmount || 0;
+    const discountReason = registeredPatient.discountReason || '';
     
     const labTestsList = registeredPatient.labTestNames || [];
     const labTestsDetails = registeredPatient.labTestDetails || [];
@@ -658,181 +608,38 @@ const RegisterPatient = () => {
           <title>REYS CLINIC - Payment Receipt</title>
           <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { 
-              font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif;
-              background: #fff;
-              padding: 0;
-              margin: 0;
-            }
-            .receipt {
-              max-width: 100%;
-              width: 100%;
-              background: white;
-              margin: 0;
-              padding: 0;
-            }
-            .receipt-content {
-              padding: 20px 25px;
-            }
-            .header {
-              text-align: center;
-              padding-bottom: 12px;
-              margin-bottom: 15px;
-            }
-            .logo-img {
-              max-width: 180px;
-              height: auto;
-              margin-bottom: 8px;
-            }
-            .clinic-address {
-              font-size: 12px;
-              font-weight: bold;
-              color: #333;
-              margin-top: 5px;
-            }
-            .contact-info {
-              font-size: 12px;
-              font-weight: bold;
-              color: #333;
-            }
-            
-            .top-section {
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              margin-bottom: 20px;
-              border-bottom: 1px solid #ccc;
-              padding-bottom: 12px;
-            }
-            .receipt-title {
-              font-size: 22px;
-              font-weight: bold;
-              letter-spacing: 2px;
-            }
-            .qr-placeholder {
-              width: 50px;
-              height: 50px;
-              background: linear-gradient(45deg, #333 25%, transparent 25%), 
-                          linear-gradient(-45deg, #333 25%, transparent 25%);
-              background-size: 8px 8px;
-              background-color: #f0f0f0;
-              border: 1px solid #999;
-            }
-            
-            .info-bordered {
-              border: 1px solid #ccc;
-              margin-bottom: 15px;
-            }
-            .info-row-double {
-              display: flex;
-              justify-content: space-between;
-              padding: 8px 12px;
-              border-bottom: 1px solid #eee;
-            }
-            .info-row-double:last-child {
-              border-bottom: none;
-            }
-            .info-label-double {
-              font-weight: bold;
-              font-size: 12px;
-            }
-            .info-value-double {
-              font-size: 12px;
-            }
-            
-            .patient-box {
-              border: 1px solid #ccc;
-              margin-bottom: 15px;
-            }
-            .patient-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 8px 12px;
-              border-bottom: 1px solid #eee;
-            }
-            .patient-row:last-child {
-              border-bottom: none;
-            }
-            .patient-label {
-              font-weight: bold;
-              font-size: 12px;
-            }
-            .patient-value {
-              font-size: 12px;
-            }
-            
-            .tests-list {
-              margin-top: 10px;
-              padding: 8px;
-              background: #f9f9f9;
-              border-radius: 4px;
-            }
-            .test-item {
-              display: flex;
-              justify-content: space-between;
-              font-size: 11px;
-              padding: 4px 0;
-              border-bottom: 1px dotted #ddd;
-            }
-            .test-item:last-child {
-              border-bottom: none;
-            }
-            .test-name {
-              font-weight: normal;
-            }
-            .test-price {
-              font-weight: bold;
-              color: #2e7d32;
-            }
-            
-            .amount-section {
-              display: flex;
-              justify-content: flex-end;
-              margin-bottom: 20px;
-            }
-            .amount-table {
-              width: 220px;
-              border-collapse: collapse;
-            }
-            .amount-table td {
-              padding: 6px 8px;
-              font-size: 13px;
-            }
-            .amount-table td:first-child {
-              font-weight: bold;
-            }
-            .amount-table td:last-child {
-              text-align: right;
-            }
-            .total-row td {
-              font-weight: bold;
-              font-size: 15px;
-              border-top: 2px solid #333;
-              padding-top: 8px;
-            }
-            
-            .signature {
-              margin-top: 25px;
-              text-align: center;
-              font-size: 12px;
-              padding-top: 15px;
-              border-top: 1px solid #ccc;
-            }
-            
-            .footer {
-              margin-top: 20px;
-              padding: 10px;
-              text-align: center;
-              font-size: 10px;
-              color: #666;
-              border-top: 1px solid #ccc;
-            }
-            
-            @media print {
-              body { padding: 0; margin: 0; }
-              .receipt { box-shadow: none; margin: 0; }
-              .receipt-content { padding: 15px 20px; }
-            }
+            body { font-family: 'Times New Roman', 'Georgia', 'Arial', sans-serif; background: #fff; padding: 0; margin: 0; }
+            .receipt { max-width: 100%; width: 100%; background: white; margin: 0; padding: 0; }
+            .receipt-content { padding: 20px 25px; }
+            .header { text-align: center; padding-bottom: 12px; margin-bottom: 15px; }
+            .logo-img { max-width: 180px; height: auto; margin-bottom: 8px; }
+            .clinic-address { font-size: 12px; font-weight: bold; color: #333; margin-top: 5px; }
+            .contact-info { font-size: 12px; font-weight: bold; color: #333; }
+            .top-section { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 12px; }
+            .receipt-title { font-size: 22px; font-weight: bold; letter-spacing: 2px; }
+            .info-bordered { border: 1px solid #ccc; margin-bottom: 15px; }
+            .info-row-double { display: flex; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #eee; }
+            .info-row-double:last-child { border-bottom: none; }
+            .info-label-double { font-weight: bold; font-size: 12px; }
+            .info-value-double { font-size: 12px; }
+            .patient-box { border: 1px solid #ccc; margin-bottom: 15px; }
+            .patient-row { display: flex; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #eee; }
+            .patient-row:last-child { border-bottom: none; }
+            .patient-label { font-weight: bold; font-size: 12px; }
+            .patient-value { font-size: 12px; }
+            .tests-list { margin-top: 10px; padding: 8px; background: #f9f9f9; border-radius: 4px; }
+            .test-item { display: flex; justify-content: space-between; font-size: 11px; padding: 4px 0; border-bottom: 1px dotted #ddd; }
+            .test-item:last-child { border-bottom: none; }
+            .amount-section { display: flex; justify-content: flex-end; margin-bottom: 20px; }
+            .amount-table { width: 220px; border-collapse: collapse; }
+            .amount-table td { padding: 6px 8px; font-size: 13px; }
+            .amount-table td:first-child { font-weight: bold; }
+            .amount-table td:last-child { text-align: right; }
+            .discount-row td { color: #e67e22; }
+            .total-row td { font-weight: bold; font-size: 15px; border-top: 2px solid #333; padding-top: 8px; }
+            .signature { margin-top: 25px; text-align: center; font-size: 12px; padding-top: 15px; border-top: 1px solid #ccc; }
+            .footer { margin-top: 20px; padding: 10px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #ccc; }
+            @media print { body { padding: 0; margin: 0; } .receipt { box-shadow: none; margin: 0; } .receipt-content { padding: 15px 20px; } }
           </style>
         </head>
         <body>
@@ -850,37 +657,16 @@ const RegisterPatient = () => {
               </div>
               
               <div class="info-bordered">
-                <div class="info-row-double">
-                  <span class="info-label-double">SERVICE TYPE:</span>
-                  <span class="info-value-double">${registeredPatient.referredTo === 'doctor' ? 'DOCTOR CONSULTATION' : 'LABORATORY SERVICES'}</span>
-                </div>
-                <div class="info-row-double">
-                  <span class="info-label-double">PRINT DATE:</span>
-                  <span class="info-value-double">${currentDate}</span>
-                </div>
-                <div class="info-row-double">
-                  <span class="info-label-double">RECEIPT NO:</span>
-                  <span class="info-value-double">${refNo}</span>
-                </div>
+                <div class="info-row-double"><span class="info-label-double">SERVICE TYPE:</span><span class="info-value-double">${registeredPatient.referredTo === 'doctor' ? 'DOCTOR CONSULTATION' : 'LABORATORY SERVICES'}</span></div>
+                <div class="info-row-double"><span class="info-label-double">PRINT DATE:</span><span class="info-value-double">${currentDate}</span></div>
+                <div class="info-row-double"><span class="info-label-double">RECEIPT NO:</span><span class="info-value-double">${refNo}</span></div>
               </div>
               
               <div class="patient-box">
-                <div class="patient-row">
-                  <span class="patient-label">PATIENT ID:</span>
-                  <span class="patient-value">${shortTicketId}</span>
-                </div>
-                <div class="patient-row">
-                  <span class="patient-label">PATIENT NAME:</span>
-                  <span class="patient-value">${registeredPatient.childName}</span>
-                </div>
-                <div class="patient-row">
-                  <span class="patient-label">PARENT/GUARDIAN:</span>
-                  <span class="patient-value">${registeredPatient.parentName}</span>
-                </div>
-                <div class="patient-row">
-                  <span class="patient-label">${registeredPatient.referredTo === 'doctor' ? 'DOCTOR:' : 'LAB TECHNICIAN:'}</span>
-                  <span class="patient-value">${registeredPatient.referredTo === 'doctor' ? ('Dr. ' + (registeredPatient.assignedDoctor || 'N/A')) : (registeredPatient.assignedLabTech || 'N/A')}</span>
-                </div>
+                <div class="patient-row"><span class="patient-label">PATIENT ID:</span><span class="patient-value">${shortTicketId}</span></div>
+                <div class="patient-row"><span class="patient-label">PATIENT NAME:</span><span class="patient-value">${registeredPatient.childName}</span></div>
+                <div class="patient-row"><span class="patient-label">PARENT/GUARDIAN:</span><span class="patient-value">${registeredPatient.parentName}</span></div>
+                <div class="patient-row"><span class="patient-label">${registeredPatient.referredTo === 'doctor' ? 'DOCTOR:' : 'LAB TECHNICIAN:'}</span><span class="patient-value">${registeredPatient.referredTo === 'doctor' ? ('Dr. ' + (registeredPatient.assignedDoctor || 'N/A')) : (registeredPatient.assignedLabTech || 'N/A')}</span></div>
               </div>
               
               ${registeredPatient.referredTo === 'lab-tech' && labTestsList.length > 0 ? `
@@ -897,18 +683,12 @@ const RegisterPatient = () => {
               
               <div class="amount-section">
                 <table class="amount-table">
-                  <tr>
-                    <td>AMOUNT:</td>
-                    <td>$${paidAmount.toFixed(2)}</td>
-                  </tr>
-                  <tr>
-                    <td>DISCOUNT:</td>
-                    <td>$0.00</td>
-                  </tr>
-                  <tr class="total-row">
-                    <td>TOTAL PAID:</td>
-                    <td>$${paidAmount.toFixed(2)}</td>
-                  </tr>
+                  <tr><td>SUBTOTAL:</td><td>$${subtotal.toFixed(2)}</td></tr>
+                  ${discountAmount > 0 ? `
+                  <tr class="discount-row"><td>DISCOUNT ${registeredPatient.discountType === 'percentage' ? `(${registeredPatient.discountValue}%)` : ''}:</td><td> -$${discountAmount.toFixed(2)}</td></tr>
+                  ${discountReason ? `<tr><td style="font-size: 10px; color: #e67e22;" colspan="2">Reason: ${discountReason}</td></tr>` : ''}
+                  ` : ''}
+                  <tr class="total-row"><td>TOTAL PAID:</td><td>$${paidAmount.toFixed(2)}</td></tr>
                 </table>
               </div>
               
@@ -942,6 +722,8 @@ const RegisterPatient = () => {
 
   if (showConfirmation && registeredPatient) {
     const totalPaid = registeredPatient.paidAmount || registeredPatient.calculatedTotalFee || registeredPatient.ticketFee || 0;
+    const subtotal = registeredPatient.subtotal || totalPaid;
+    const discountAmount = registeredPatient.discountAmount || 0;
     
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -962,10 +744,7 @@ const RegisterPatient = () => {
                   <span>Patient Information</span>
                 </h3>
                 <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Patient ID:</span>
-                    <span className="font-mono font-semibold">{registeredPatient.patientId}</span>
-                  </div>
+                  <div className="flex justify-between"><span className="text-gray-500">Patient ID:</span><span className="font-mono font-semibold">{registeredPatient.patientId}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Child Name:</span><span className="font-semibold">{registeredPatient.childName}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Age:</span><span>{registeredPatient.childAge} years</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Sex:</span><span>{registeredPatient.childGender || 'Not specified'}</span></div>
@@ -988,26 +767,38 @@ const RegisterPatient = () => {
                       <p className="font-semibold text-gray-900">{registeredPatient.referredTo === 'doctor' ? 'Doctor Consultation' : 'Laboratory Services'}</p>
                       <p className="text-sm text-gray-500">Assigned: {registeredPatient.referredTo === 'doctor' ? ('Dr. ' + (registeredPatient.assignedDoctor || 'Pending')) : (registeredPatient.assignedLabTech || 'Pending')}</p>
                       <p className="text-sm text-gray-500 mt-1">Urgency: {registeredPatient.urgency === 'urgent' ? '⚠️ Urgent' : 'Normal'}</p>
-                      <p className="text-sm text-gray-500">Follow-up: {registeredPatient.isFollowUp ? 'Yes' : 'No'}</p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Payment Summary - Always show since payment is taken before registration */}
               <div className="mb-6">
                 <h3 className="font-bold text-gray-900 mb-3 flex items-center space-x-2">
                   <DollarSign className="w-4 h-4 text-green-600" />
                   <span>Payment Summary</span>
                 </h3>
                 <div className="bg-green-50 rounded-xl p-4">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Amount Paid:</span>
+                  {discountAmount > 0 && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Subtotal:</span>
+                        <span className="font-semibold">${subtotal.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-orange-600">
+                        <span className="text-gray-600">Discount {registeredPatient.discountType === 'percentage' ? `(${registeredPatient.discountValue}%)` : ''}:</span>
+                        <span className="font-semibold">-${discountAmount.toFixed(2)}</span>
+                      </div>
+                      {registeredPatient.discountReason && (
+                        <div className="flex justify-between text-xs text-gray-500">
+                          <span>Reason:</span>
+                          <span>{registeredPatient.discountReason}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <div className="flex justify-between pt-2 border-t border-green-200">
+                    <span className="font-semibold">Amount Paid:</span>
                     <span className="font-semibold text-green-600">${totalPaid.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between pt-2">
-                    <span className="font-semibold">Status:</span>
-                    <span className="font-semibold text-green-600">✓ Paid</span>
                   </div>
                   <div className="flex justify-between pt-2">
                     <span className="font-semibold">Payment Method:</span>
@@ -1028,35 +819,21 @@ const RegisterPatient = () => {
               
               <div className="flex flex-col gap-3">
                 <div className="flex flex-col sm:flex-row gap-3">
-                  <button 
-                    onClick={handlePrintReferral} 
-                    className="flex-1 px-4 py-3 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 flex items-center justify-center space-x-2"
-                  >
-                    <Printer className="w-5 h-5" />
+                  <button onClick={handlePrintReferral} className="flex-1 px-4 py-3 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 flex items-center justify-center space-x-2">
+                    <PrinterIcon className="w-5 h-5" />
                     <span>Print Referral Slip</span>
                   </button>
-                  
-                  <button 
-                    onClick={handlePrintReceipt} 
-                    className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 flex items-center justify-center space-x-2"
-                  >
-                    <Printer className="w-5 h-5" />
+                  <button onClick={handlePrintReceipt} className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 flex items-center justify-center space-x-2">
+                    <PrinterIcon className="w-5 h-5" />
                     <span>Print Payment Receipt</span>
                   </button>
                 </div>
-                
                 <div className="flex flex-col sm:flex-row gap-3">
-                  <button 
-                    onClick={handleNewRegistration} 
-                    className="flex-1 px-4 py-3 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 flex items-center justify-center space-x-2"
-                  >
-                    <UserPlus className="w-5 h-5" />
+                  <button onClick={handleNewRegistration} className="flex-1 px-4 py-3 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 flex items-center justify-center space-x-2">
+                    <UserPlusIcon className="w-5 h-5" />
                     <span>Register New Patient</span>
                   </button>
-                  <button 
-                    onClick={() => navigate('/reception-dashboard')} 
-                    className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg font-semibold hover:bg-gray-50 flex items-center justify-center space-x-2"
-                  >
+                  <button onClick={() => navigate('/reception-dashboard')} className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg font-semibold hover:bg-gray-50 flex items-center justify-center space-x-2">
                     <ArrowLeft className="w-5 h-5" />
                     <span>Back to Dashboard</span>
                   </button>
@@ -1069,6 +846,8 @@ const RegisterPatient = () => {
     );
   }
 
+  const subtotal = calculateSubtotal();
+  const discountAmount = calculateDiscountAmount();
   const totalFee = calculateTotalFee();
 
   return (
@@ -1163,7 +942,10 @@ const RegisterPatient = () => {
                             {labTests.filter(test => test.name.toLowerCase().includes(labTestSearchTerm.toLowerCase())).map((test) => (
                               <label key={test._id} className={`flex items-center p-2 mb-1 rounded-lg border cursor-pointer transition-all ${formData.selectedLabTests.includes(test._id) ? 'border-purple-500 bg-purple-50' : 'border-gray-200 bg-white hover:border-purple-300'}`}>
                                 <input type="checkbox" checked={formData.selectedLabTests.includes(test._id)} onChange={() => handleLabTestToggle(test._id)} className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500" />
-                                <div className="ml-2 flex-1"><p className="text-sm font-medium text-gray-800">{test.name}</p><p className="text-xs text-gray-500">{test.category}</p></div>
+                                <div className="ml-2 flex-1">
+                                  <p className="text-sm font-medium text-gray-800">{test.name}</p>
+                                  <p className="text-xs text-gray-500">{getCategoryName(test)}</p>
+                                </div>
                                 <p className="text-sm font-semibold text-green-600">${test.price}</p>
                               </label>
                             ))}
@@ -1177,12 +959,26 @@ const RegisterPatient = () => {
                       
                       {formData.selectedLabTests.length > 0 && (
                         <div className="mt-4 p-4 bg-purple-50 rounded-xl">
-                          <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2"><Package className="w-4 h-4 text-purple-600" />Selected Tests ({formData.selectedLabTests.length})</h4>
+                          <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                            <Package className="w-4 h-4 text-purple-600" />
+                            Selected Tests ({formData.selectedLabTests.length})
+                          </h4>
                           <div className="space-y-2 max-h-48 overflow-y-auto">
-                            {getSelectedTestsDetails().map(test => (
-                              <div key={test._id} className="flex justify-between items-center p-2 bg-white rounded-lg"><span className="text-sm">{test.name}</span><span className="text-sm font-semibold text-green-600">${test.price}</span></div>
+                            {labTests.filter(test => formData.selectedLabTests.includes(test._id)).map(test => (
+                              <div key={test._id} className="flex justify-between items-center p-2 bg-white rounded-lg">
+                                <div>
+                                  <span className="text-sm font-medium">{test.name}</span>
+                                  <p className="text-xs text-gray-500">{getCategoryName(test)}</p>
+                                </div>
+                                <span className="text-sm font-semibold text-green-600">${test.price}</span>
+                              </div>
                             ))}
-                            <div className="border-t pt-2 mt-2"><div className="flex justify-between items-center font-bold"><span>Total</span><span className="text-[#D01A2B]">${getSelectedTestsDetails().reduce((sum, t) => sum + (t.price || 0), 0)}</span></div></div>
+                            <div className="border-t pt-2 mt-2">
+                              <div className="flex justify-between items-center font-bold">
+                                <span>Subtotal</span>
+                                <span className="text-[#D01A2B]">${subtotal.toFixed(2)}</span>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -1223,14 +1019,71 @@ const RegisterPatient = () => {
                     </div>
                   </div>
 
+                  {/* Discount Section - Only for Lab Tests */}
+                  {selectedDepartment === 'lab-tech' && formData.selectedLabTests.length > 0 && (
+                    <div className="border-t pt-6">
+                      <div className="flex items-center space-x-2 mb-4"><Percent className="w-5 h-5 text-[#D01A2B]" /><h3 className="text-lg font-bold text-gray-900">Step 7: Apply Discount (Optional)</h3></div>
+                      <div className="bg-orange-50 rounded-xl p-4">
+                        <div className="grid md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-gray-700 font-semibold mb-2">Discount Type</label>
+                            <div className="flex space-x-3">
+                              <button type="button" onClick={() => { setDiscountType('percentage'); setDiscountValue(0); }} className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${discountType === 'percentage' ? 'bg-orange-600 text-white' : 'bg-white border border-gray-300 text-gray-700'}`}>Percentage (%)</button>
+                              <button type="button" onClick={() => { setDiscountType('fixed'); setDiscountValue(0); }} className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${discountType === 'fixed' ? 'bg-orange-600 text-white' : 'bg-white border border-gray-300 text-gray-700'}`}>Fixed Amount ($)</button>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-gray-700 font-semibold mb-2">Discount Value</label>
+                            <div className="relative">
+                              {discountType === 'percentage' ? <Percent className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /> : <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />}
+                              <input type="number" step={discountType === 'percentage' ? 1 : 0.01} value={discountValue} onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)} min="0" max={discountType === 'percentage' ? 100 : subtotal} className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]" placeholder={discountType === 'percentage' ? 'e.g., 10' : 'e.g., 5.00'} />
+                            </div>
+                            {discountValue > 0 && discountType === 'percentage' && discountValue > 100 && (
+                              <p className="text-red-500 text-xs mt-1">Percentage cannot exceed 100%</p>
+                            )}
+                            {discountValue > 0 && discountType === 'fixed' && discountValue > subtotal && (
+                              <p className="text-red-500 text-xs mt-1">Discount cannot exceed subtotal (${subtotal.toFixed(2)})</p>
+                            )}
+                          </div>
+                          <div className="md:col-span-2">
+                            <label className="block text-gray-700 font-semibold mb-2">Discount Reason (Optional)</label>
+                            <input type="text" value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} placeholder="e.g., Promotional offer, Bulk discount, Loyalty customer, etc." className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="border-t pt-6">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center space-x-2"><DollarSign className="w-5 h-5 text-[#D01A2B]" /><h3 className="text-lg font-bold text-gray-900">Payment Summary</h3></div>
                       {selectedDepartment === 'doctor' && (<button type="button" onClick={handleEditFee} className="flex items-center space-x-1 text-blue-600 hover:text-blue-700 text-sm"><Edit className="w-4 h-4" /><span>Edit Fee</span></button>)}
                     </div>
                     <div className="bg-gray-50 rounded-xl p-4">
-                      <div className="flex justify-between mb-2"><span className="text-gray-600">{selectedDepartment === 'doctor' ? 'Doctor Consultation Fee:' : 'Total Lab Test Fees:'}</span><span className="text-xl font-bold text-[#D01A2B]">${totalFee.toFixed(2)}</span></div>
-                      <p className="text-xs text-gray-500 mt-2">{selectedDepartment === 'doctor' ? 'Doctor consultation fee includes initial assessment.' : 'Lab test fees are for the selected tests.'}</p>
+                      <div className="flex justify-between mb-2">
+                        <span className="text-gray-600">{selectedDepartment === 'doctor' ? 'Doctor Consultation Fee:' : 'Subtotal:'}</span>
+                        <span className="font-semibold">${subtotal.toFixed(2)}</span>
+                      </div>
+                      {discountAmount > 0 && (
+                        <>
+                          <div className="flex justify-between mb-2 text-orange-600">
+                            <span className="text-gray-600">Discount {discountType === 'percentage' ? `(${discountValue}%)` : ''}:</span>
+                            <span className="font-semibold">-${discountAmount.toFixed(2)}</span>
+                          </div>
+                          {discountReason && (
+                            <div className="flex justify-between mb-2 text-xs text-gray-500">
+                              <span>Reason:</span>
+                              <span>{discountReason}</span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                      <div className="border-t pt-2 mt-2">
+                        <div className="flex justify-between">
+                          <span className="text-lg font-bold text-gray-900">Total:</span>
+                          <span className="text-xl font-bold text-[#D01A2B]">${totalFee.toFixed(2)}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1262,7 +1115,15 @@ const RegisterPatient = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6">
             <div className="text-center mb-4"><div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4"><DollarSign className="w-8 h-8 text-purple-600" /></div><h3 className="text-xl font-bold text-gray-900 mb-2">Complete Payment</h3><p className="text-gray-500">Please collect payment from patient</p></div>
-            <div className="mb-4 p-3 bg-gray-50 rounded-lg"><div className="flex justify-between mb-2"><span className="text-gray-600">Total Amount:</span><span className="font-bold text-xl text-[#D01A2B]">${totalFee.toFixed(2)}</span></div></div>
+            
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <div className="flex justify-between mb-2"><span className="text-gray-600">Subtotal:</span><span className="font-semibold">${subtotal.toFixed(2)}</span></div>
+              {discountAmount > 0 && (
+                <div className="flex justify-between mb-2 text-orange-600"><span className="text-gray-600">Discount:</span><span className="font-semibold">-${discountAmount.toFixed(2)}</span></div>
+              )}
+              <div className="flex justify-between"><span className="text-gray-600 font-bold">Total Amount:</span><span className="font-bold text-xl text-[#D01A2B]">${totalFee.toFixed(2)}</span></div>
+            </div>
+            
             <div className="mb-4"><label className="block text-gray-700 font-semibold mb-2">Amount Received *</label><input type="number" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder="Enter amount received" className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B]" autoFocus />{paymentAmount && parseFloat(paymentAmount) > totalFee && <p className="text-sm text-green-600 mt-1">Change: ${(parseFloat(paymentAmount) - totalFee).toFixed(2)}</p>}{paymentAmount && parseFloat(paymentAmount) < totalFee && <p className="text-sm text-red-600 mt-1">Insufficient: ${(totalFee - parseFloat(paymentAmount)).toFixed(2)} remaining</p>}</div>
             <div className="mb-4"><label className="block text-gray-700 font-semibold mb-2">Payment Method</label><div className="grid grid-cols-2 gap-3"><button type="button" onClick={() => setPaymentMethod('cash')} className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${paymentMethod === 'cash' ? 'border-[#D01A2B] bg-red-50' : 'border-gray-300'}`}><DollarSign className="w-4 h-4" /><span>Cash</span></button><button type="button" onClick={() => setPaymentMethod('card')} className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${paymentMethod === 'card' ? 'border-[#D01A2B] bg-red-50' : 'border-gray-300'}`}><CreditCard className="w-4 h-4" /><span>Card</span></button></div></div>
             <div className="flex space-x-3"><button onClick={() => setShowPaymentModal(false)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50">Cancel</button><button onClick={confirmPayment} disabled={processingPayment} className="flex-1 px-4 py-2 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 disabled:opacity-50 flex items-center justify-center space-x-2">{processingPayment ? <Loader className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}<span>Pay Now</span></button></div>
@@ -1273,7 +1134,6 @@ const RegisterPatient = () => {
   );
 };
 
-// Icons
 const Printer = ({ className }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3h12v6"/><rect x="6" y="15" width="12" height="6" rx="2"/></svg>;
 
 const UserPlus = ({ className }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>;

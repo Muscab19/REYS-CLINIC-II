@@ -5,7 +5,7 @@ import {
   Loader, CheckCircle, XCircle, AlertCircle, Users, Stethoscope,
   Microscope, Pill, Hospital, CreditCard, Smartphone, Building, RefreshCw,
   Wallet, Receipt, FileText, Package, FlaskConical, Clock,
-  ChevronLeft, ChevronRight, Eye, X, Trash2
+  ChevronLeft, ChevronRight, Eye, X, Trash2, TrendingUp as ProfitIcon
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -26,6 +26,7 @@ const Revenue = () => {
   const [selectedSource, setSelectedSource] = useState('all');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('all');
   const [transactions, setTransactions] = useState([]);
+  const [inventoryMap, setInventoryMap] = useState({});
   const [summary, setSummary] = useState({
     totalRevenue: 0,
     doctorFees: 0,
@@ -33,7 +34,12 @@ const Revenue = () => {
     labTestsDoctor: 0,
     inpatient: 0,
     pharmacyPrescriptions: 0,
+    pharmacyPrescriptionsCost: 0,
+    pharmacyPrescriptionsProfit: 0,
     walkinSales: 0,
+    walkinSalesCost: 0,
+    walkinSalesProfit: 0,
+    totalPharmacyProfit: 0,
     byPaymentMethod: {
       cash: 0,
       mobile: 0,
@@ -63,10 +69,39 @@ const Revenue = () => {
     fetchRevenueData();
   }, [dateRange]);
 
+  // Fetch inventory for cost data
+  const fetchInventoryData = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/inventory`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        const inventoryDataMap = {};
+        data.data.forEach(item => {
+          inventoryDataMap[item.name.toLowerCase()] = {
+            price: item.price,
+            cost: item.cost || 0
+          };
+        });
+        setInventoryMap(inventoryDataMap);
+        return inventoryDataMap;
+      }
+    } catch (error) {
+      console.error('Error fetching inventory:', error);
+    }
+    return {};
+  };
+
   const fetchRevenueData = async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
+      
+      // Fetch inventory for cost data first
+      const inventoryData = await fetchInventoryData();
       
       // Fetch all revenue sources
       const [
@@ -136,9 +171,7 @@ const Revenue = () => {
         }
         
         uniquePatients.forEach(patient => {
-          // Doctor consultation fees - CHECK BOTH paidAmount AND ticketFee
           if (patient.referredTo === 'doctor') {
-            // Check if payment was made (either paidAmount > 0 OR paymentStatus is 'paid')
             const isPaid = patient.paymentStatus === 'paid' || (patient.paidAmount > 0);
             const amount = patient.paidAmount > 0 ? patient.paidAmount : (patient.ticketFee || 0);
             
@@ -165,7 +198,6 @@ const Revenue = () => {
             }
           }
           
-          // Lab tests requested at registration (walk-in lab tests)
           if (patient.referredTo === 'lab-tech' && patient.selectedLabTests && patient.selectedLabTests.length > 0 && patient.paidAmount) {
             const transaction = {
               id: `REG-LAB-${patient._id}`,
@@ -273,22 +305,42 @@ const Revenue = () => {
         });
       }
 
-      // 5. Pharmacy Prescriptions - IMPROVED
+      // 5. Pharmacy Prescriptions - WITH COST & PROFIT CALCULATION
       let prescriptionsTotal = 0;
+      let prescriptionsCostTotal = 0;
+      let prescriptionsProfitTotal = 0;
+      
       if (prescriptionsData.success) {
-        prescriptionsData.data.forEach(prescription => {
-          // Check if payment was made (paidAmount > 0 OR paymentStatus is 'paid')
+        for (const prescription of prescriptionsData.data) {
           const isPaid = prescription.paymentStatus === 'paid' || (prescription.paidAmount > 0);
-          const amount = prescription.paidAmount > 0 ? prescription.paidAmount : 
-                        (prescription.medications ? prescription.medications.length * 5 : 0); // Fallback calculation
           
-          if (amount > 0 && isPaid) {
+          // Calculate revenue, cost, and profit
+          let revenue = 0;
+          let cost = 0;
+          
+          if (prescription.medications) {
+            for (const med of prescription.medications) {
+              const inventoryItem = inventoryData[med.name?.toLowerCase()] || { price: 0, cost: 0 };
+              const medRevenue = inventoryItem.price;
+              const medCost = inventoryItem.cost;
+              revenue += medRevenue;
+              cost += medCost;
+            }
+          }
+          
+          const profit = revenue - cost;
+          const amount = isPaid ? (prescription.paidAmount > 0 ? prescription.paidAmount : revenue) : 0;
+          
+          if (amount > 0) {
             const transaction = {
               id: `RX-${prescription.prescriptionId}`,
               date: prescription.dispensedAt || prescription.createdAt,
               source: 'Pharmacy Prescription',
               category: 'pharmacy',
               amount: amount,
+              revenue: revenue,
+              cost: cost,
+              profit: profit,
               paymentMethod: prescription.paymentMethod || 'cash',
               description: `${prescription.medications?.length || 0} medication(s) for ${prescription.patientName}`,
               patientName: prescription.patientName,
@@ -300,22 +352,42 @@ const Revenue = () => {
             };
             allTransactions.push(transaction);
             prescriptionsTotal += amount;
+            prescriptionsCostTotal += cost;
+            prescriptionsProfitTotal += profit;
           }
-        });
+        }
       }
 
-      // 6. Walk-in Sales
+      // 6. Walk-in Sales - WITH COST & PROFIT CALCULATION
       let walkinTotal = 0;
+      let walkinCostTotal = 0;
+      let walkinProfitTotal = 0;
+      
       if (walkinSalesData.length > 0) {
-        walkinSalesData.forEach(sale => {
+        for (const sale of walkinSalesData) {
+          let revenue = sale.total || sale.subtotal || 0;
+          let cost = 0;
+          
+          if (sale.items) {
+            for (const item of sale.items) {
+              const inventoryItem = inventoryData[item.name?.toLowerCase()] || { cost: 0 };
+              cost += (inventoryItem.cost || 0) * (item.quantity || 1);
+            }
+          }
+          
+          const profit = revenue - cost;
+          
           const transaction = {
             id: sale.saleId || sale.id,
             date: sale.date,
             source: 'Walk-in Sale',
             category: 'walkin',
-            amount: sale.paidAmount,
+            amount: sale.paidAmount || revenue,
+            revenue: revenue,
+            cost: cost,
+            profit: profit,
             paymentMethod: sale.paymentMethod || 'cash',
-            description: `${sale.items.length} item(s) sold`,
+            description: `${sale.items?.length || 0} item(s) sold`,
             reference: sale.saleId,
             items: sale.items,
             status: 'completed',
@@ -323,8 +395,10 @@ const Revenue = () => {
             sourceId: sale.id
           };
           allTransactions.push(transaction);
-          walkinTotal += sale.paidAmount;
-        });
+          walkinTotal += sale.paidAmount || revenue;
+          walkinCostTotal += cost;
+          walkinProfitTotal += profit;
+        }
       }
 
       // Sort by date (newest first)
@@ -355,7 +429,12 @@ const Revenue = () => {
         labTestsDoctor: labTestsDoctorTotal,
         inpatient: inpatientTotal,
         pharmacyPrescriptions: prescriptionsTotal,
+        pharmacyPrescriptionsCost: prescriptionsCostTotal,
+        pharmacyPrescriptionsProfit: prescriptionsProfitTotal,
         walkinSales: walkinTotal,
+        walkinSalesCost: walkinCostTotal,
+        walkinSalesProfit: walkinProfitTotal,
+        totalPharmacyProfit: prescriptionsProfitTotal + walkinProfitTotal,
         byPaymentMethod: paymentMethodTotals
       });
 
@@ -390,40 +469,40 @@ const Revenue = () => {
     try {
       const token = localStorage.getItem('token');
       
-      // Delete based on source type
-      let deleteUrl = '';
       switch (transactionToDelete.sourceType) {
         case 'patient':
-          deleteUrl = `${API_BASE_URL}/api/patients/${transactionToDelete.sourceId}`;
+          await fetch(`${API_BASE_URL}/api/patients/${transactionToDelete.sourceId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
           break;
         case 'consultation':
-          // For consultations stored in localStorage
           const consultations = JSON.parse(localStorage.getItem('consultations') || '[]');
           const updatedConsultations = consultations.filter(c => c.id !== transactionToDelete.sourceId);
           localStorage.setItem('consultations', JSON.stringify(updatedConsultations));
-          toast.success('Transaction deleted successfully');
-          fetchRevenueData();
-          setShowDeleteConfirm(false);
-          setTransactionToDelete(null);
-          return;
+          break;
         case 'walkin':
-          // For walk-in sales stored in localStorage
           const walkinSales = JSON.parse(localStorage.getItem('walkinSales') || '[]');
           const updatedWalkinSales = walkinSales.filter(s => s.id !== transactionToDelete.sourceId);
           localStorage.setItem('walkinSales', JSON.stringify(updatedWalkinSales));
-          toast.success('Transaction deleted successfully');
-          fetchRevenueData();
-          setShowDeleteConfirm(false);
-          setTransactionToDelete(null);
-          return;
+          break;
         case 'inpatient':
-          deleteUrl = `${API_BASE_URL}/api/inpatients/${transactionToDelete.sourceId}`;
+          await fetch(`${API_BASE_URL}/api/inpatients/${transactionToDelete.sourceId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
           break;
         case 'lab_request':
-          deleteUrl = `${API_BASE_URL}/api/lab-requests/${transactionToDelete.sourceId}`;
+          await fetch(`${API_BASE_URL}/api/lab-requests/${transactionToDelete.sourceId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
           break;
         case 'prescription':
-          deleteUrl = `${API_BASE_URL}/api/prescriptions/${transactionToDelete.sourceId}`;
+          await fetch(`${API_BASE_URL}/api/prescriptions/${transactionToDelete.sourceId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
           break;
         default:
           toast.error('Cannot delete this transaction');
@@ -432,24 +511,8 @@ const Revenue = () => {
           return;
       }
       
-      if (deleteUrl) {
-        const response = await fetch(deleteUrl, {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-          toast.success('Transaction deleted successfully');
-          fetchRevenueData();
-        } else {
-          toast.error(data.msg || 'Failed to delete transaction');
-        }
-      }
-      
+      toast.success('Transaction deleted successfully');
+      fetchRevenueData();
       setShowDeleteConfirm(false);
       setTransactionToDelete(null);
     } catch (error) {
@@ -500,7 +563,6 @@ const Revenue = () => {
   const getFilteredTransactions = () => {
     let filtered = [...transactions];
     
-    // Filter by source
     if (selectedSource !== 'all') {
       filtered = filtered.filter(t => {
         if (selectedSource === 'doctor_fee') return t.category === 'doctor_fee';
@@ -513,7 +575,6 @@ const Revenue = () => {
       });
     }
     
-    // Filter by payment method
     if (selectedPaymentMethod !== 'all') {
       filtered = filtered.filter(t => t.paymentMethod?.toLowerCase() === selectedPaymentMethod.toLowerCase());
     }
@@ -569,13 +630,13 @@ const Revenue = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white shadow-sm sticky top-0 z-30">
+      <header className="bg-white shadow-sm sticky top-0 z-30 print:shadow-none print:border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <button
                 onClick={() => navigate('/superadmin')}
-                className="p-2 hover:bg-gray-100 rounded-full"
+                className="p-2 hover:bg-gray-100 rounded-full print:hidden"
               >
                 <ArrowLeft className="w-5 h-5 text-gray-600" />
               </button>
@@ -587,7 +648,7 @@ const Revenue = () => {
                 </div>
               </div>
             </div>
-            <div className="flex items-center space-x-2 text-sm text-gray-500">
+            <div className="flex items-center space-x-2 text-sm text-gray-500 print:hidden">
               <TrendingUp className="w-4 h-4 text-green-600" />
               <span>Super Admin - Revenue Dashboard</span>
             </div>
@@ -595,9 +656,18 @@ const Revenue = () => {
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Date Range Filter */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 print:py-4">
+        {/* Report Title - Print Only */}
+        <div className="hidden print:block text-center mb-8">
+          <h2 className="text-2xl font-bold text-gray-900">Revenue Report</h2>
+          <p className="text-gray-500">
+            Period: {new Date(dateRange.startDate).toLocaleDateString()} - {new Date(dateRange.endDate).toLocaleDateString()}
+          </p>
+          <p className="text-gray-400 text-sm">Generated on {new Date().toLocaleString()}</p>
+        </div>
+
+        {/* Date Range Filter - Hide on Print */}
+        <div className="bg-white rounded-xl shadow-sm p-4 mb-6 print:hidden">
           <div className="flex flex-col md:flex-row gap-4 items-end">
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
@@ -660,116 +730,154 @@ const Revenue = () => {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <div className="bg-gradient-to-r from-emerald-500 to-green-600 rounded-xl p-4 text-white">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8 print:grid-cols-4 print:gap-2">
+          <div className="bg-gradient-to-r from-emerald-500 to-green-600 rounded-xl p-4 text-white print:bg-gray-800 print:text-black print:border">
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-white/80 text-sm">Total Revenue</p>
+                <p className="text-white/80 text-sm print:text-gray-500">Total Revenue</p>
                 <p className="text-3xl font-bold">{formatCurrency(summary.totalRevenue)}</p>
               </div>
-              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center print:hidden">
                 <DollarSign className="w-6 h-6" />
               </div>
             </div>
-            <p className="text-white/70 text-xs mt-2">{filteredTransactions.length} transactions</p>
+            <p className="text-white/70 text-xs mt-2 print:text-gray-500">{filteredTransactions.length} transactions</p>
           </div>
 
-          <div className="bg-white rounded-xl p-4 shadow-sm">
+          {/* Pharmacy Revenue Card */}
+          <div className="bg-white rounded-xl p-4 shadow-sm print:border">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-gray-500 text-sm">Pharmacy Revenue</p>
+                <p className="text-2xl font-bold text-green-600 print:text-black">{formatCurrency(summary.pharmacyPrescriptions + summary.walkinSales)}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Prescriptions: {formatCurrency(summary.pharmacyPrescriptions)} | Walk-in: {formatCurrency(summary.walkinSales)}
+                </p>
+              </div>
+              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center print:hidden">
+                <Pill className="w-5 h-5 text-green-600" />
+              </div>
+            </div>
+          </div>
+
+          {/* Pharmacy Profit Card */}
+          <div className="bg-gradient-to-r from-purple-500 to-indigo-600 rounded-xl p-4 text-white print:bg-gray-800 print:text-black print:border">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-white/80 text-sm print:text-gray-500">Pharmacy Profit</p>
+                <p className="text-3xl font-bold">{formatCurrency(summary.totalPharmacyProfit)}</p>
+                <p className="text-white/70 text-xs mt-1">
+                  Margin: {summary.pharmacyPrescriptions + summary.walkinSales > 0 
+                    ? ((summary.totalPharmacyProfit / (summary.pharmacyPrescriptions + summary.walkinSales)) * 100).toFixed(1) 
+                    : 0}%
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center print:hidden">
+                <ProfitIcon className="w-6 h-6" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl p-4 shadow-sm print:border">
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-gray-500 text-sm">Doctor Fees</p>
                 <p className="text-2xl font-bold text-gray-900">{formatCurrency(summary.doctorFees)}</p>
               </div>
-              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center print:hidden">
                 <Stethoscope className="w-5 h-5 text-blue-600" />
               </div>
             </div>
           </div>
 
-          <div className="bg-white rounded-xl p-4 shadow-sm">
+          <div className="bg-white rounded-xl p-4 shadow-sm print:border">
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-gray-500 text-sm">Lab Tests</p>
                 <p className="text-2xl font-bold text-gray-900">{formatCurrency(summary.labTestsRegistration + summary.labTestsDoctor)}</p>
                 <p className="text-xs text-gray-400">Walk-in: {formatCurrency(summary.labTestsRegistration)} | Doctor: {formatCurrency(summary.labTestsDoctor)}</p>
               </div>
-              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center print:hidden">
                 <FlaskConical className="w-5 h-5 text-purple-600" />
               </div>
             </div>
           </div>
 
-          <div className="bg-white rounded-xl p-4 shadow-sm">
+          <div className="bg-white rounded-xl p-4 shadow-sm print:border">
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-gray-500 text-sm">Inpatient</p>
                 <p className="text-2xl font-bold text-gray-900">{formatCurrency(summary.inpatient)}</p>
               </div>
-              <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+              <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center print:hidden">
                 <Hospital className="w-5 h-5 text-red-600" />
               </div>
             </div>
           </div>
+        </div>
 
-          <div className="bg-white rounded-xl p-4 shadow-sm">
-            <div className="flex justify-between items-start">
+        {/* Profit Summary Row */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 print:grid-cols-2 print:gap-2">
+          <div className="bg-green-50 rounded-xl p-4 border border-green-200 print:border">
+            <div className="flex justify-between items-center">
               <div>
-                <p className="text-gray-500 text-sm">Pharmacy</p>
-                <p className="text-2xl font-bold text-gray-900">{formatCurrency(summary.pharmacyPrescriptions)}</p>
+                <p className="text-green-700 text-sm font-semibold">Prescription Profit</p>
+                <p className="text-2xl font-bold text-green-800">{formatCurrency(summary.pharmacyPrescriptionsProfit)}</p>
               </div>
-              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                <Pill className="w-5 h-5 text-green-600" />
+              <div className="text-right">
+                <p className="text-green-600 text-xs">Revenue: {formatCurrency(summary.pharmacyPrescriptions)}</p>
+                <p className="text-red-500 text-xs">Cost: {formatCurrency(summary.pharmacyPrescriptionsCost)}</p>
               </div>
             </div>
           </div>
-
-          <div className="bg-white rounded-xl p-4 shadow-sm">
-            <div className="flex justify-between items-start">
+          <div className="bg-orange-50 rounded-xl p-4 border border-orange-200 print:border">
+            <div className="flex justify-between items-center">
               <div>
-                <p className="text-gray-500 text-sm">Walk-in Sales</p>
-                <p className="text-2xl font-bold text-gray-900">{formatCurrency(summary.walkinSales)}</p>
+                <p className="text-orange-700 text-sm font-semibold">Walk-in Sales Profit</p>
+                <p className="text-2xl font-bold text-orange-800">{formatCurrency(summary.walkinSalesProfit)}</p>
               </div>
-              <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
-                <Package className="w-5 h-5 text-orange-600" />
+              <div className="text-right">
+                <p className="text-orange-600 text-xs">Revenue: {formatCurrency(summary.walkinSales)}</p>
+                <p className="text-red-500 text-xs">Cost: {formatCurrency(summary.walkinSalesCost)}</p>
               </div>
             </div>
           </div>
         </div>
 
         {/* Payment Method Breakdown */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-yellow-50 rounded-xl p-3 flex items-center justify-between">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8 print:grid-cols-4 print:gap-2">
+          <div className="bg-yellow-50 rounded-xl p-3 flex items-center justify-between print:border">
             <div className="flex items-center space-x-2">
-              <DollarSign className="w-5 h-5 text-yellow-600" />
+              <DollarSign className="w-5 h-5 text-yellow-600 print:hidden" />
               <span className="text-sm font-medium">Cash</span>
             </div>
             <span className="font-bold">{formatCurrency(summary.byPaymentMethod.cash)}</span>
           </div>
-          <div className="bg-blue-50 rounded-xl p-3 flex items-center justify-between">
+          <div className="bg-blue-50 rounded-xl p-3 flex items-center justify-between print:border">
             <div className="flex items-center space-x-2">
-              <Smartphone className="w-5 h-5 text-blue-600" />
+              <Smartphone className="w-5 h-5 text-blue-600 print:hidden" />
               <span className="text-sm font-medium">Mobile Money</span>
             </div>
             <span className="font-bold">{formatCurrency(summary.byPaymentMethod.mobile)}</span>
           </div>
-          <div className="bg-purple-50 rounded-xl p-3 flex items-center justify-between">
+          <div className="bg-purple-50 rounded-xl p-3 flex items-center justify-between print:border">
             <div className="flex items-center space-x-2">
-              <Building className="w-5 h-5 text-purple-600" />
+              <Building className="w-5 h-5 text-purple-600 print:hidden" />
               <span className="text-sm font-medium">Bank Transfer</span>
             </div>
             <span className="font-bold">{formatCurrency(summary.byPaymentMethod.bank)}</span>
           </div>
-          <div className="bg-green-50 rounded-xl p-3 flex items-center justify-between">
+          <div className="bg-green-50 rounded-xl p-3 flex items-center justify-between print:border">
             <div className="flex items-center space-x-2">
-              <CreditCard className="w-5 h-5 text-green-600" />
+              <CreditCard className="w-5 h-5 text-green-600 print:hidden" />
               <span className="text-sm font-medium">Card</span>
             </div>
             <span className="font-bold">{formatCurrency(summary.byPaymentMethod.card)}</span>
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex justify-end space-x-3 mb-4">
+        {/* Actions - Hide on Print */}
+        <div className="flex justify-end space-x-3 mb-4 print:hidden">
           <button
             onClick={handleExportCSV}
             className="px-4 py-2 border border-gray-300 rounded-lg flex items-center gap-2 hover:bg-gray-50"
@@ -787,7 +895,7 @@ const Revenue = () => {
         </div>
 
         {/* Transactions Table */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden print:shadow-none print:border">
           {loading ? (
             <div className="flex justify-center py-20">
               <Loader className="w-8 h-8 animate-spin text-[#D01A2B]" />
@@ -796,19 +904,19 @@ const Revenue = () => {
             <>
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-gray-50 border-b">
+                  <thead className="bg-gray-50 border-b print:bg-gray-100">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Date</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Source</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Description</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Amount</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Payment Method</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Actions</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase print:text-gray-700">Date</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase print:text-gray-700">Source</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase print:text-gray-700">Description</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase print:text-gray-700">Amount</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase print:text-gray-700">Payment Method</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase print:hidden">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {filteredTransactions.map((transaction, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50">
+                      <tr key={idx} className="hover:bg-gray-50 print:hover:bg-white">
                         <td className="px-6 py-4 text-sm">
                           {new Date(transaction.date).toLocaleDateString()}
                         </td>
@@ -825,12 +933,12 @@ const Revenue = () => {
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          <span className="font-semibold text-green-600">{formatCurrency(transaction.amount)}</span>
+                          <span className="font-semibold text-green-600 print:text-black">{formatCurrency(transaction.amount)}</span>
                         </td>
                         <td className="px-6 py-4">
                           <span className="capitalize text-sm">{transaction.paymentMethod}</span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 print:hidden">
                           <div className="flex space-x-2">
                             <button
                               onClick={() => handleViewDetails(transaction)}
@@ -851,11 +959,11 @@ const Revenue = () => {
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-gray-50 border-t">
+                  <tfoot className="bg-gray-50 border-t print:bg-gray-100">
                     <tr>
                       <td colSpan="3" className="px-6 py-3 text-right font-semibold">Total:</td>
-                      <td className="px-6 py-3 font-bold text-[#D01A2B]">{formatCurrency(totalFiltered)}</td>
-                      <td colSpan="2"></td>
+                      <td className="px-6 py-3 font-bold text-[#D01A2B] print:text-black">{formatCurrency(totalFiltered)}</td>
+                      <td colSpan="2" className="print:hidden"></td>
                     </tr>
                   </tfoot>
                 </table>
@@ -870,6 +978,12 @@ const Revenue = () => {
               )}
             </>
           )}
+        </div>
+
+        {/* Footer for Print */}
+        <div className="hidden print:block mt-8 text-center text-sm text-gray-400">
+          <p>REYS CLINIC - Official Financial Report</p>
+          <p>This is a computer-generated document. No signature required.</p>
         </div>
       </div>
 
@@ -896,6 +1010,22 @@ const Revenue = () => {
                 
                 <div><span className="text-gray-500">Amount:</span></div>
                 <div className="text-right font-bold text-green-600">{formatCurrency(selectedTransaction.amount)}</div>
+                
+                {selectedTransaction.revenue !== undefined && (
+                  <>
+                    <div><span className="text-gray-500">Revenue:</span></div>
+                    <div className="text-right text-green-600">{formatCurrency(selectedTransaction.revenue)}</div>
+                    
+                    <div><span className="text-gray-500">Cost:</span></div>
+                    <div className="text-right text-red-600">{formatCurrency(selectedTransaction.cost)}</div>
+                    
+                    <div><span className="text-gray-500">Profit:</span></div>
+                    <div className="text-right text-purple-600 font-bold">{formatCurrency(selectedTransaction.profit)}</div>
+                    
+                    <div><span className="text-gray-500">Margin:</span></div>
+                    <div className="text-right">{selectedTransaction.revenue > 0 ? ((selectedTransaction.profit / selectedTransaction.revenue) * 100).toFixed(1) : 0}%</div>
+                  </>
+                )}
                 
                 <div><span className="text-gray-500">Payment Method:</span></div>
                 <div className="text-right capitalize">{selectedTransaction.paymentMethod}</div>
@@ -983,6 +1113,51 @@ const Revenue = () => {
           </div>
         </div>
       )}
+
+      {/* Print Styles */}
+      <style jsx>{`
+        @media print {
+          @page {
+            size: A4;
+            margin: 1.5cm;
+          }
+          body {
+            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact;
+          }
+          .print\\:shadow-none {
+            box-shadow: none !important;
+          }
+          .print\\:border {
+            border: 1px solid #e5e7eb !important;
+          }
+          .print\\:bg-gray-800 {
+            background-color: #1f2937 !important;
+          }
+          .print\\:text-black {
+            color: #000000 !important;
+          }
+          .print\\:text-gray-700 {
+            color: #374151 !important;
+          }
+          .print\\:hidden {
+            display: none !important;
+          }
+          .print\\:block {
+            display: block !important;
+          }
+          .print\\:grid-cols-4 {
+            grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+          }
+          .print\\:gap-2 {
+            gap: 0.5rem !important;
+          }
+          .print\\:py-4 {
+            padding-top: 1rem !important;
+            padding-bottom: 1rem !important;
+          }
+        }
+      `}</style>
     </div>
   );
 };

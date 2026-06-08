@@ -83,6 +83,11 @@ const inventorySchema = new mongoose.Schema({
     enum: ['tablet', 'capsule', 'ml', 'mg', 'bottle', 'vial', 'inhaler', 'tube', 'box'],
     default: 'tablet'
   },
+  cost: {
+    type: Number,
+    required: [true, 'Cost is required'],
+    min: 0
+  },
   price: {
     type: Number,
     required: [true, 'Price is required'],
@@ -126,6 +131,17 @@ inventorySchema.virtual('transactions', {
   foreignField: 'medicationId'
 });
 
+// Virtual for profit margin
+inventorySchema.virtual('profitMargin').get(function() {
+  if (this.price === 0) return 0;
+  return ((this.price - this.cost) / this.price * 100).toFixed(2);
+});
+
+// Virtual for profit per unit
+inventorySchema.virtual('profitPerUnit').get(function() {
+  return this.price - this.cost;
+});
+
 // Method to check if stock is low
 inventorySchema.methods.isLowStock = function() {
   return this.currentStock <= this.minStock;
@@ -138,11 +154,13 @@ inventorySchema.methods.getStockStatus = function() {
   return 'in_stock';
 };
 
-// Indexes - Remove duplicate index definitions
+// Indexes
 inventorySchema.index({ name: 1 });
 inventorySchema.index({ category: 1 });
 inventorySchema.index({ currentStock: 1 });
 inventorySchema.index({ expiryDate: 1 });
+inventorySchema.index({ cost: 1 });
+inventorySchema.index({ price: 1 });
 
 // Create models
 const Inventory = mongoose.model('Inventory', inventorySchema);

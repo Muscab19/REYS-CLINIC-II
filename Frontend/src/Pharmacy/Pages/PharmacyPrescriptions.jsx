@@ -35,7 +35,10 @@ import {
   CreditCard,
   History,
   TrendingUp,
-  Wallet
+  TrendingDown,
+  Wallet,
+  Percent,
+  PieChart
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -71,7 +74,10 @@ const PharmacyPrescriptions = () => {
     paid: 0,
     partial: 0,
     unpaid: 0,
-    totalRevenue: 0
+    totalRevenue: 0,
+    totalCost: 0,
+    totalProfit: 0,
+    averageMargin: 0
   });
 
   // Check if user is pharmacist
@@ -89,7 +95,7 @@ const PharmacyPrescriptions = () => {
   // Load prescriptions and inventory when component loads
   useEffect(() => {
     fetchPrescriptions();
-    fetchInventoryPrices();
+    fetchInventoryData();
   }, []);
 
   const fetchPrescriptions = async () => {
@@ -114,7 +120,7 @@ const PharmacyPrescriptions = () => {
     }
   };
 
-  const fetchInventoryPrices = async () => {
+  const fetchInventoryData = async () => {
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/inventory`, {
@@ -123,21 +129,74 @@ const PharmacyPrescriptions = () => {
       const data = await response.json();
       
       if (data.success) {
-        // Create a map of medication name -> price (case-insensitive)
-        const priceMap = {};
+        // Create a map of medication name -> { price, cost }
+        const inventoryDataMap = {};
         data.data.forEach(item => {
-          priceMap[item.name.toLowerCase()] = item.price;
+          inventoryDataMap[item.name.toLowerCase()] = {
+            price: item.price,
+            cost: item.cost || 0
+          };
         });
-        setInventoryMap(priceMap);
-        console.log('Inventory price map:', priceMap);
+        setInventoryMap(inventoryDataMap);
+        console.log('Inventory data map:', inventoryDataMap);
       }
     } catch (error) {
-      console.error('Error fetching inventory prices:', error);
+      console.error('Error fetching inventory data:', error);
     }
   };
 
+  const calculatePrescriptionTotals = (prescription) => {
+    let totalRevenue = 0;
+    let totalCost = 0;
+    
+    if (prescription.medications) {
+      prescription.medications.forEach(med => {
+        const inventoryData = inventoryMap[med.name?.toLowerCase()] || { price: 0, cost: 0 };
+        totalRevenue += inventoryData.price;
+        totalCost += inventoryData.cost;
+      });
+    }
+    
+    const profit = totalRevenue - totalCost;
+    const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
+    
+    return { totalRevenue, totalCost, profit, margin };
+  };
+
+  const calculatePrescriptionTotal = (prescription) => {
+    let total = 0;
+    if (prescription.medications) {
+      prescription.medications.forEach(med => {
+        const price = inventoryMap[med.name?.toLowerCase()]?.price || 0;
+        total += price;
+      });
+    }
+    return total;
+  };
+
+  const getMedicationDetails = (medName) => {
+    return inventoryMap[medName?.toLowerCase()] || { price: 0, cost: 0 };
+  };
+
+  const calculateRemainingAmount = (prescription) => {
+    const total = calculatePrescriptionTotal(prescription);
+    const paid = prescription.paidAmount || 0;
+    return total - paid;
+  };
+
   const calculateStats = (prescriptionsList) => {
-    const totalRevenue = prescriptionsList.reduce((sum, p) => sum + (p.paidAmount || 0), 0);
+    let totalRevenue = 0;
+    let totalCost = 0;
+    
+    prescriptionsList.forEach(pres => {
+      const totals = calculatePrescriptionTotals(pres);
+      totalRevenue += totals.totalRevenue;
+      totalCost += totals.totalCost;
+    });
+    
+    const totalProfit = totalRevenue - totalCost;
+    const averageMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+    
     setStats({
       total: prescriptionsList.length,
       pending: prescriptionsList.filter(p => p.status === 'pending').length,
@@ -146,30 +205,11 @@ const PharmacyPrescriptions = () => {
       paid: prescriptionsList.filter(p => p.paymentStatus === 'paid').length,
       partial: prescriptionsList.filter(p => p.paymentStatus === 'partial').length,
       unpaid: prescriptionsList.filter(p => p.paymentStatus === 'unpaid' || !p.paymentStatus).length,
-      totalRevenue: totalRevenue
+      totalRevenue: totalRevenue,
+      totalCost: totalCost,
+      totalProfit: totalProfit,
+      averageMargin: averageMargin
     });
-  };
-
-  const calculatePrescriptionTotal = (prescription) => {
-    let total = 0;
-    if (prescription.medications) {
-      prescription.medications.forEach(med => {
-        // Get price from inventory map (case-insensitive), fallback to 0
-        const price = inventoryMap[med.name?.toLowerCase()] || 0;
-        total += price;
-      });
-    }
-    return total;
-  };
-
-  const getMedicationPrice = (medName) => {
-    return inventoryMap[medName?.toLowerCase()] || 0;
-  };
-
-  const calculateRemainingAmount = (prescription) => {
-    const total = calculatePrescriptionTotal(prescription);
-    const paid = prescription.paidAmount || 0;
-    return total - paid;
   };
 
   const handleViewDetails = (prescription) => {
@@ -182,8 +222,8 @@ const PharmacyPrescriptions = () => {
     let outOfStock = [];
     if (prescription.medications) {
       prescription.medications.forEach(med => {
-        const price = inventoryMap[med.name?.toLowerCase()];
-        if (price === undefined) {
+        const inventoryData = inventoryMap[med.name?.toLowerCase()];
+        if (!inventoryData) {
           outOfStock.push(med.name);
         }
       });
@@ -206,124 +246,120 @@ const PharmacyPrescriptions = () => {
   };
 
   const confirmDispense = async () => {
-  // First, check if we need to deduct stock from inventory
-  try {
-    const token = localStorage.getItem('token');
-    const outOfStock = [];
-    const stockUpdates = [];
-    
-    // First, check all medications for stock availability
-    for (const med of selectedPrescription.medications) {
-      // Find inventory item by name (case-insensitive)
-      const inventoryResponse = await fetch(`${API_BASE_URL}/api/inventory`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const inventoryData = await inventoryResponse.json();
+    try {
+      const token = localStorage.getItem('token');
+      const outOfStock = [];
+      const stockUpdates = [];
       
-      if (inventoryData.success) {
-        const inventoryItem = inventoryData.data.find(
-          item => item.name.toLowerCase() === med.name.toLowerCase()
-        );
+      // First, check all medications for stock availability
+      for (const med of selectedPrescription.medications) {
+        // Find inventory item by name (case-insensitive)
+        const inventoryResponse = await fetch(`${API_BASE_URL}/api/inventory`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const inventoryData = await inventoryResponse.json();
         
-        if (!inventoryItem) {
-          outOfStock.push(`${med.name} (Not in inventory)`);
-        } else {
-          // Parse dosage to get quantity (e.g., "500mg" might mean 1 tablet, or could be numeric)
-          let quantityToDeduct = 1; // Default to 1
+        if (inventoryData.success) {
+          const inventoryItem = inventoryData.data.find(
+            item => item.name.toLowerCase() === med.name.toLowerCase()
+          );
           
-          // Try to extract quantity from dosage field
-          if (med.dosage) {
-            // Look for patterns like "2 tablets", "2 pills", "2x", etc.
-            const tabletMatch = med.dosage.match(/^(\d+)\s*(?:tablet|pill|tab|capsule|cap)/i);
-            const xMatch = med.dosage.match(/^(\d+)\s*x/i);
-            const numberMatch = med.dosage.match(/^(\d+)/);
-            
-            if (tabletMatch) {
-              quantityToDeduct = parseInt(tabletMatch[1]);
-            } else if (xMatch) {
-              quantityToDeduct = parseInt(xMatch[1]);
-            } else if (numberMatch && parseInt(numberMatch[1]) <= 10) {
-              quantityToDeduct = parseInt(numberMatch[1]);
-            }
-          }
-          
-          // Also check duration for total quantity (e.g., "7 days" means 7 tablets if taken once daily)
-          let totalQuantity = quantityToDeduct;
-          if (med.duration) {
-            const daysMatch = med.duration.match(/(\d+)\s*(?:day|days)/i);
-            if (daysMatch && med.frequency) {
-              const days = parseInt(daysMatch[1]);
-              let timesPerDay = 1;
-              if (med.frequency.toLowerCase().includes('twice') || med.frequency === '2x' || med.frequency === '2x3') {
-                timesPerDay = 2;
-              } else if (med.frequency.toLowerCase().includes('three') || med.frequency === '3x') {
-                timesPerDay = 3;
-              } else if (med.frequency.toLowerCase().includes('four') || med.frequency === '4x') {
-                timesPerDay = 4;
-              }
-              totalQuantity = quantityToDeduct * timesPerDay * days;
-            }
-          }
-          
-          if (inventoryItem.currentStock < totalQuantity) {
-            outOfStock.push(`${med.name} (Need ${totalQuantity}, Only ${inventoryItem.currentStock} in stock)`);
+          if (!inventoryItem) {
+            outOfStock.push(`${med.name} (Not in inventory)`);
           } else {
-            stockUpdates.push({
-              id: inventoryItem._id,
-              name: med.name,
-              currentStock: inventoryItem.currentStock,
-              quantity: totalQuantity
-            });
+            // Parse dosage to get quantity
+            let quantityToDeduct = 1;
+            
+            if (med.dosage) {
+              const tabletMatch = med.dosage.match(/^(\d+)\s*(?:tablet|pill|tab|capsule|cap)/i);
+              const xMatch = med.dosage.match(/^(\d+)\s*x/i);
+              const numberMatch = med.dosage.match(/^(\d+)/);
+              
+              if (tabletMatch) {
+                quantityToDeduct = parseInt(tabletMatch[1]);
+              } else if (xMatch) {
+                quantityToDeduct = parseInt(xMatch[1]);
+              } else if (numberMatch && parseInt(numberMatch[1]) <= 10) {
+                quantityToDeduct = parseInt(numberMatch[1]);
+              }
+            }
+            
+            let totalQuantity = quantityToDeduct;
+            if (med.duration) {
+              const daysMatch = med.duration.match(/(\d+)\s*(?:day|days)/i);
+              if (daysMatch && med.frequency) {
+                const days = parseInt(daysMatch[1]);
+                let timesPerDay = 1;
+                if (med.frequency.toLowerCase().includes('twice') || med.frequency === '2x' || med.frequency === '2x3') {
+                  timesPerDay = 2;
+                } else if (med.frequency.toLowerCase().includes('three') || med.frequency === '3x') {
+                  timesPerDay = 3;
+                } else if (med.frequency.toLowerCase().includes('four') || med.frequency === '4x') {
+                  timesPerDay = 4;
+                }
+                totalQuantity = quantityToDeduct * timesPerDay * days;
+              }
+            }
+            
+            if (inventoryItem.currentStock < totalQuantity) {
+              outOfStock.push(`${med.name} (Need ${totalQuantity}, Only ${inventoryItem.currentStock} in stock)`);
+            } else {
+              stockUpdates.push({
+                id: inventoryItem._id,
+                name: med.name,
+                currentStock: inventoryItem.currentStock,
+                quantity: totalQuantity
+              });
+            }
           }
         }
       }
-    }
-    
-    if (outOfStock.length > 0) {
-      toast.error(`Cannot dispense:\n${outOfStock.join('\n')}`);
-      return;
-    }
-    
-    // Perform stock deductions
-    for (const update of stockUpdates) {
-      const newStock = update.currentStock - update.quantity;
-      await fetch(`${API_BASE_URL}/api/inventory/${update.id}/stock`, {
+      
+      if (outOfStock.length > 0) {
+        toast.error(`Cannot dispense:\n${outOfStock.join('\n')}`);
+        return;
+      }
+      
+      // Perform stock deductions
+      for (const update of stockUpdates) {
+        const newStock = update.currentStock - update.quantity;
+        await fetch(`${API_BASE_URL}/api/inventory/${update.id}/stock`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ quantity: newStock })
+        });
+        console.log(`Deducted ${update.quantity} ${update.name} (${update.currentStock} -> ${newStock})`);
+      }
+      
+      // Then mark prescription as dispensed
+      const response = await fetch(`${API_BASE_URL}/api/prescriptions/${selectedPrescription._id}/dispense`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ quantity: newStock })
+        body: JSON.stringify({ dispensedBy: user?.name })
       });
-      console.log(`Deducted ${update.quantity} ${update.name} (${update.currentStock} -> ${newStock})`);
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success(`Prescription ${selectedPrescription.prescriptionId} dispensed successfully!`);
+        fetchPrescriptions();
+        fetchInventoryData();
+        setShowDispenseModal(false);
+        setSelectedPrescription(null);
+      } else {
+        toast.error(data.msg || 'Failed to dispense prescription');
+      }
+    } catch (error) {
+      console.error('Error dispensing prescription:', error);
+      toast.error('Failed to dispense prescription');
     }
-    
-    // Then mark prescription as dispensed
-    const response = await fetch(`${API_BASE_URL}/api/prescriptions/${selectedPrescription._id}/dispense`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ dispensedBy: user?.name })
-    });
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      toast.success(`Prescription ${selectedPrescription.prescriptionId} dispensed successfully!`);
-      fetchPrescriptions();
-      fetchInventoryPrices(); // Refresh inventory prices
-      setShowDispenseModal(false);
-      setSelectedPrescription(null);
-    } else {
-      toast.error(data.msg || 'Failed to dispense prescription');
-    }
-  } catch (error) {
-    console.error('Error dispensing prescription:', error);
-    toast.error('Failed to dispense prescription');
-  }
-};
+  };
 
   const confirmPayment = async () => {
     if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
@@ -381,11 +417,11 @@ const PharmacyPrescriptions = () => {
 
   const getPaymentStatusBadge = (paymentStatus, paidAmount, totalAmount) => {
     if (paymentStatus === 'paid' || (paidAmount && paidAmount >= totalAmount)) {
-      return <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-semibold">Paid</span>;
+      return <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-semibold flex items-center space-x-1"><CheckCircle className="w-3 h-3" /><span>Paid</span></span>;
     } else if (paymentStatus === 'partial' || (paidAmount && paidAmount > 0)) {
-      return <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full text-xs font-semibold">Partial</span>;
+      return <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full text-xs font-semibold flex items-center space-x-1"><AlertTriangle className="w-3 h-3" /><span>Partial</span></span>;
     } else {
-      return <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-semibold">Unpaid</span>;
+      return <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-semibold flex items-center space-x-1"><XCircle className="w-3 h-3" /><span>Unpaid</span></span>;
     }
   };
 
@@ -438,6 +474,10 @@ const PharmacyPrescriptions = () => {
     return null;
   };
 
+  const formatCurrency = (amount) => {
+    return `$${(amount || 0).toFixed(2)}`;
+  };
+
   if (!isAuthenticated || user?.role !== 'pharmacy') {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -461,7 +501,7 @@ const PharmacyPrescriptions = () => {
               </button>
               <div className="flex flex-col items-center space-y-1">
                 <img src={logo} alt="REYS CLINIC Logo" className="h-10 w-auto object-contain" />
-                <p className="text-xs pl-10 text-gray-500">Pharmacy - Prescriptions & Payments</p>
+                <p className="text-xs pl-10 text-gray-500">Pharmacy - Prescriptions & Profit Analytics</p>
               </div>
             </div>
             <button onClick={fetchPrescriptions} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg">
@@ -472,8 +512,102 @@ const PharmacyPrescriptions = () => {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats Cards */}
-        
+        {/* Stats Cards - Row 1 */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <FileText className="w-5 h-5 text-blue-600" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
+            <p className="text-sm text-gray-500">Total Prescriptions</p>
+          </div>
+          <div className="bg-green-50 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                <DollarSign className="w-5 h-5 text-green-600" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-green-600">{formatCurrency(stats.totalRevenue)}</p>
+            <p className="text-sm text-green-600">Total Revenue</p>
+          </div>
+          <div className="bg-red-50 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+                <TrendingDown className="w-5 h-5 text-red-600" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-red-600">{formatCurrency(stats.totalCost)}</p>
+            <p className="text-sm text-red-600">Total Cost</p>
+          </div>
+          <div className="bg-purple-50 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                <TrendingUp className="w-5 h-5 text-purple-600" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-purple-600">{formatCurrency(stats.totalProfit)}</p>
+            <p className="text-sm text-purple-600">Total Profit</p>
+          </div>
+          <div className="bg-indigo-50 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                <Percent className="w-5 h-5 text-indigo-600" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-indigo-600">{stats.averageMargin.toFixed(1)}%</p>
+            <p className="text-sm text-indigo-600">Avg. Margin</p>
+          </div>
+          <div className="bg-yellow-50 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+                <Clock className="w-5 h-5 text-yellow-600" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-yellow-600">{stats.pending}</p>
+            <p className="text-sm text-yellow-600">Pending</p>
+          </div>
+        </div>
+
+        {/* Stats Cards - Row 2 (Payment Status) */}
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-4 mb-8">
+          <div className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <CheckCircle className="w-4 h-4 text-green-600" />
+              <span className="text-xs text-gray-600">Paid</span>
+            </div>
+            <span className="font-bold">{stats.paid}</span>
+          </div>
+          <div className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 text-yellow-600" />
+              <span className="text-xs text-gray-600">Partial</span>
+            </div>
+            <span className="font-bold">{stats.partial}</span>
+          </div>
+          <div className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <XCircle className="w-4 h-4 text-red-600" />
+              <span className="text-xs text-gray-600">Unpaid</span>
+            </div>
+            <span className="font-bold">{stats.unpaid}</span>
+          </div>
+          <div className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Package className="w-4 h-4 text-blue-600" />
+              <span className="text-xs text-gray-600">Dispensed</span>
+            </div>
+            <span className="font-bold">{stats.dispensed}</span>
+          </div>
+          <div className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <XCircle className="w-4 h-4 text-gray-600" />
+              <span className="text-xs text-gray-600">Cancelled</span>
+            </div>
+            <span className="font-bold">{stats.cancelled}</span>
+          </div>
+        </div>
 
         {/* Search and Filters */}
         <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
@@ -521,169 +655,170 @@ const PharmacyPrescriptions = () => {
         </div>
 
         {/* Prescriptions Table */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          {loading ? (
-            <div className="flex justify-center items-center py-20">
-              <Loader className="w-8 h-8 animate-spin text-[#D01A2B]" />
-            </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Prescription ID</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Patient</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Doctor</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Date</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Total</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Paid</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Balance</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Payment</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {currentPrescriptions.map((pres) => {
-                      const totalAmount = calculatePrescriptionTotal(pres);
-                      const paidAmount = pres.paidAmount || 0;
-                      const balance = totalAmount - paidAmount;
-                      return (
-                        <tr key={pres._id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-6 py-4">
-                            <div className="flex items-center space-x-2">
-                              <span className="font-mono text-sm font-semibold text-[#D01A2B]">{pres.prescriptionId}</span>
-                              {getUrgencyBadge(pres.urgency)}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div>
-                              <p className="font-semibold text-gray-900">{pres.patientName}</p>
-                              <p className="text-xs text-gray-400">Parent: {pres.parentName}</p>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 text-gray-600">{pres.doctor}</td>
-                          <td className="px-6 py-4 text-gray-600">
-                            {new Date(pres.createdAt).toLocaleDateString()}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="font-semibold">${totalAmount.toFixed(2)}</span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="text-green-600">${paidAmount.toFixed(2)}</span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={balance > 0 ? 'text-red-600 font-semibold' : 'text-green-600'}>
-                              ${balance.toFixed(2)}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            {getPaymentStatusBadge(pres.paymentStatus, paidAmount, totalAmount)}
-                          </td>
-                          <td className="px-6 py-4">{getStatusBadge(pres.status)}</td>
-                          <td className="px-6 py-4">
-                            <div className="flex space-x-2">
-                              <button
-                                onClick={() => handleViewDetails(pres)}
-                                className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg"
-                                title="View Details"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                              {pres.status === 'pending' && (
-                                <button
-                                  onClick={() => handleDispense(pres)}
-                                  className="p-1 text-green-600 hover:bg-green-50 rounded-lg"
-                                  title="Dispense"
-                                >
-                                  <Package className="w-4 h-4" />
-                                </button>
-                              )}
-                              {pres.status === 'dispensed' && balance > 0 && (
-                                <button
-                                  onClick={() => handleMakePayment(pres)}
-                                  className="p-1 text-purple-600 hover:bg-purple-50 rounded-lg"
-                                  title="Make Payment"
-                                >
-                                  <DollarSign className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                           </td>
-                          </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {filteredPrescriptions.length === 0 && (
-                <div className="text-center py-12">
-                  <FileText className="w-16 h-16 mx-auto text-gray-300 mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-1">No prescriptions found</h3>
-                  <p className="text-gray-500">Prescriptions will appear here when doctors send them</p>
-                </div>
-              )}
-
-              {/* Pagination */}
-              {filteredPrescriptions.length > 0 && (
-                <div className="px-6 py-4 border-t flex flex-col sm:flex-row justify-between items-center gap-4">
-                  <p className="text-sm text-gray-500">
-                    Showing {indexOfFirstItem + 1} to {Math.min(indexOfLastItem, filteredPrescriptions.length)} of {filteredPrescriptions.length} prescriptions
-                  </p>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => paginate(currentPage - 1)}
-                      disabled={currentPage === 1}
-                      className="p-2 border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                      let pageNum;
-                      if (totalPages <= 5) {
-                        pageNum = i + 1;
-                      } else if (currentPage <= 3) {
-                        pageNum = i + 1;
-                      } else if (currentPage >= totalPages - 2) {
-                        pageNum = totalPages - 4 + i;
-                      } else {
-                        pageNum = currentPage - 2 + i;
-                      }
-                      return (
+<div className="bg-white rounded-xl shadow-sm overflow-hidden">
+  {loading ? (
+    <div className="flex justify-center items-center py-20">
+      <Loader className="w-8 h-8 animate-spin text-[#D01A2B]" />
+    </div>
+  ) : (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Prescription ID</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Patient</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Doctor</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Date</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Total</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Paid</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Balance</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Payment</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {currentPrescriptions.map((pres) => {
+              const totalAmount = calculatePrescriptionTotal(pres);
+              const paidAmount = pres.paidAmount || 0;
+              const balance = totalAmount - paidAmount;
+              
+              return (
+                <tr key={pres._id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-mono text-sm font-semibold text-[#D01A2B]">{pres.prescriptionId}</span>
+                      {getUrgencyBadge(pres.urgency)}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div>
+                      <p className="font-semibold text-gray-900">{pres.patientName}</p>
+                      <p className="text-xs text-gray-400">Parent: {pres.parentName}</p>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-gray-600">{pres.doctor}</td>
+                  <td className="px-6 py-4 text-gray-600">
+                    {new Date(pres.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="font-semibold">${totalAmount.toFixed(2)}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="text-green-600">${paidAmount.toFixed(2)}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={balance > 0 ? 'text-red-600 font-semibold' : 'text-green-600'}>
+                      ${balance.toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    {getPaymentStatusBadge(pres.paymentStatus, paidAmount, totalAmount)}
+                  </td>
+                  <td className="px-6 py-4">{getStatusBadge(pres.status)}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => handleViewDetails(pres)}
+                        className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg"
+                        title="View Details"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      {pres.status === 'pending' && (
                         <button
-                          key={pageNum}
-                          onClick={() => paginate(pageNum)}
-                          className={`px-3 py-1 rounded-lg ${
-                            currentPage === pageNum
-                              ? 'bg-[#D01A2B] text-white'
-                              : 'hover:bg-gray-100'
-                          }`}
+                          onClick={() => handleDispense(pres)}
+                          className="p-1 text-green-600 hover:bg-green-50 rounded-lg"
+                          title="Dispense"
                         >
-                          {pageNum}
+                          <Package className="w-4 h-4" />
                         </button>
-                      );
-                    })}
-                    <button
-                      onClick={() => paginate(currentPage + 1)}
-                      disabled={currentPage === totalPages}
-                      className="p-2 border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+                      )}
+                      {pres.status === 'dispensed' && balance > 0 && (
+                        <button
+                          onClick={() => handleMakePayment(pres)}
+                          className="p-1 text-purple-600 hover:bg-purple-50 rounded-lg"
+                          title="Make Payment"
+                        >
+                          <DollarSign className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {filteredPrescriptions.length === 0 && (
+        <div className="text-center py-12">
+          <FileText className="w-16 h-16 mx-auto text-gray-300 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-1">No prescriptions found</h3>
+          <p className="text-gray-500">Prescriptions will appear here when doctors send them</p>
         </div>
+      )}
+
+      {/* Pagination */}
+      {filteredPrescriptions.length > 0 && (
+        <div className="px-6 py-4 border-t flex flex-col sm:flex-row justify-between items-center gap-4">
+          <p className="text-sm text-gray-500">
+            Showing {indexOfFirstItem + 1} to {Math.min(indexOfLastItem, filteredPrescriptions.length)} of {filteredPrescriptions.length} prescriptions
+          </p>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => paginate(currentPage - 1)}
+              disabled={currentPage === 1}
+              className="p-2 border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              let pageNum;
+              if (totalPages <= 5) {
+                pageNum = i + 1;
+              } else if (currentPage <= 3) {
+                pageNum = i + 1;
+              } else if (currentPage >= totalPages - 2) {
+                pageNum = totalPages - 4 + i;
+              } else {
+                pageNum = currentPage - 2 + i;
+              }
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => paginate(pageNum)}
+                  className={`px-3 py-1 rounded-lg ${
+                    currentPage === pageNum
+                      ? 'bg-[#D01A2B] text-white'
+                      : 'hover:bg-gray-100'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => paginate(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className="p-2 border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )}
+</div>
       </div>
 
       {/* Prescription Details Modal */}
       {showDetailsModal && selectedPrescription && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
               <h3 className="text-xl font-bold text-gray-900">Prescription Details</h3>
               <button onClick={() => setShowDetailsModal(false)} className="p-1 hover:bg-gray-100 rounded-full">
@@ -729,16 +864,19 @@ const PharmacyPrescriptions = () => {
               <div className="mb-6">
                 <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
                   <DollarSign className="w-4 h-4 text-[#D01A2B]" />
-                  <span>Payment Summary</span>
+                  <span>Payment & Profit Summary</span>
                 </h4>
-                <div className="grid grid-cols-3 gap-4 bg-gray-50 rounded-xl p-4">
-                  <div><p className="text-sm text-gray-500">Total Amount</p><p className="text-xl font-bold">${calculatePrescriptionTotal(selectedPrescription).toFixed(2)}</p></div>
-                  <div><p className="text-sm text-gray-500">Paid Amount</p><p className="text-xl font-bold text-green-600">${(selectedPrescription.paidAmount || 0).toFixed(2)}</p></div>
-                  <div><p className="text-sm text-gray-500">Balance Due</p><p className="text-xl font-bold text-red-600">${(calculatePrescriptionTotal(selectedPrescription) - (selectedPrescription.paidAmount || 0)).toFixed(2)}</p></div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-50 rounded-xl p-4">
+                  <div><p className="text-sm text-gray-500">Total Revenue</p><p className="text-xl font-bold text-green-600">{formatCurrency(calculatePrescriptionTotals(selectedPrescription).totalRevenue)}</p></div>
+                  <div><p className="text-sm text-gray-500">Total Cost</p><p className="text-xl font-bold text-red-600">{formatCurrency(calculatePrescriptionTotals(selectedPrescription).totalCost)}</p></div>
+                  <div><p className="text-sm text-gray-500">Total Profit</p><p className="text-xl font-bold text-purple-600">{formatCurrency(calculatePrescriptionTotals(selectedPrescription).profit)}</p></div>
+                  <div><p className="text-sm text-gray-500">Margin</p><p className="text-xl font-bold text-indigo-600">{calculatePrescriptionTotals(selectedPrescription).margin.toFixed(1)}%</p></div>
+                  <div><p className="text-sm text-gray-500">Paid Amount</p><p className="text-xl font-bold text-green-600">{formatCurrency(selectedPrescription.paidAmount || 0)}</p></div>
+                  <div><p className="text-sm text-gray-500">Balance Due</p><p className="text-xl font-bold text-red-600">{formatCurrency(calculatePrescriptionTotal(selectedPrescription) - (selectedPrescription.paidAmount || 0))}</p></div>
                 </div>
               </div>
 
-              {/* Medications */}
+              {/* Medications with Profit Breakdown */}
               <div className="mb-6">
                 <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
                   <Pill className="w-4 h-4 text-[#D01A2B]" />
@@ -752,23 +890,48 @@ const PharmacyPrescriptions = () => {
                         <th className="px-4 py-2 text-left text-sm font-semibold">Dosage</th>
                         <th className="px-4 py-2 text-left text-sm font-semibold">Frequency</th>
                         <th className="px-4 py-2 text-left text-sm font-semibold">Duration</th>
-                        <th className="px-4 py-2 text-left text-sm font-semibold">Price</th>
+                        <th className="px-4 py-2 text-right text-sm font-semibold">Cost</th>
+                        <th className="px-4 py-2 text-right text-sm font-semibold">Price</th>
+                        <th className="px-4 py-2 text-right text-sm font-semibold">Profit</th>
+                        <th className="px-4 py-2 text-right text-sm font-semibold">Margin</th>
                       </tr>
                     </thead>
                     <tbody>
                       {selectedPrescription.medications.map((med, idx) => {
-                        const price = getMedicationPrice(med.name);
+                        const details = getMedicationDetails(med.name);
+                        const profit = details.price - details.cost;
+                        const margin = details.price > 0 ? (profit / details.price) * 100 : 0;
                         return (
                           <tr key={idx} className="border-t">
                             <td className="px-4 py-2 text-sm font-medium">{med.name}</td>
                             <td className="px-4 py-2 text-sm">{med.dosage}</td>
                             <td className="px-4 py-2 text-sm">{med.frequency}</td>
                             <td className="px-4 py-2 text-sm">{med.duration}</td>
-                            <td className="px-4 py-2 text-sm">${price.toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right text-sm text-red-600">{formatCurrency(details.cost)}</td>
+                            <td className="px-4 py-2 text-right text-sm text-green-600">{formatCurrency(details.price)}</td>
+                            <td className="px-4 py-2 text-right text-sm text-purple-600">{formatCurrency(profit)}</td>
+                            <td className="px-4 py-2 text-right text-sm">
+                              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                                margin >= 50 ? 'bg-green-100 text-green-700' :
+                                margin >= 25 ? 'bg-blue-100 text-blue-700' :
+                                'bg-yellow-100 text-yellow-700'
+                              }`}>
+                                {margin.toFixed(1)}%
+                              </span>
+                            </td>
                           </tr>
                         );
                       })}
                     </tbody>
+                    <tfoot className="bg-gray-100">
+                      <tr>
+                        <td colSpan="4" className="px-4 py-2 text-right font-semibold">Totals:</td>
+                        <td className="px-4 py-2 text-right font-semibold text-red-600">{formatCurrency(calculatePrescriptionTotals(selectedPrescription).totalCost)}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-green-600">{formatCurrency(calculatePrescriptionTotals(selectedPrescription).totalRevenue)}</td>
+                        <td className="px-4 py-2 text-right font-bold text-purple-600">{formatCurrency(calculatePrescriptionTotals(selectedPrescription).profit)}</td>
+                        <td className="px-4 py-2 text-right font-bold text-indigo-600">{calculatePrescriptionTotals(selectedPrescription).margin.toFixed(1)}%</td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>
@@ -785,7 +948,7 @@ const PharmacyPrescriptions = () => {
                       <thead className="bg-gray-100">
                         <tr>
                           <th className="px-4 py-2 text-left text-sm font-semibold">Date</th>
-                          <th className="px-4 py-2 text-left text-sm font-semibold">Amount</th>
+                          <th className="px-4 py-2 text-right text-sm font-semibold">Amount</th>
                           <th className="px-4 py-2 text-left text-sm font-semibold">Method</th>
                           <th className="px-4 py-2 text-left text-sm font-semibold">Received By</th>
                         </tr>
@@ -794,7 +957,7 @@ const PharmacyPrescriptions = () => {
                         {selectedPrescription.paymentHistory.map((payment, idx) => (
                           <tr key={idx} className="border-t">
                             <td className="px-4 py-2 text-sm">{new Date(payment.date).toLocaleDateString()}</td>
-                            <td className="px-4 py-2 text-sm font-semibold text-green-600">${payment.amount.toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right text-sm font-semibold text-green-600">{formatCurrency(payment.amount)}</td>
                             <td className="px-4 py-2 text-sm capitalize">{payment.method}</td>
                             <td className="px-4 py-2 text-sm">{payment.receivedBy}</td>
                           </tr>
@@ -891,15 +1054,15 @@ const PharmacyPrescriptions = () => {
             <div className="mb-4 p-3 bg-gray-50 rounded-lg">
               <div className="flex justify-between mb-2">
                 <span className="text-gray-600">Total Amount:</span>
-                <span className="font-bold">${calculatePrescriptionTotal(selectedPrescription).toFixed(2)}</span>
+                <span className="font-bold">{formatCurrency(calculatePrescriptionTotal(selectedPrescription))}</span>
               </div>
               <div className="flex justify-between mb-2">
                 <span className="text-gray-600">Already Paid:</span>
-                <span className="text-green-600">${(selectedPrescription.paidAmount || 0).toFixed(2)}</span>
+                <span className="text-green-600">{formatCurrency(selectedPrescription.paidAmount || 0)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Balance Due:</span>
-                <span className="text-red-600 font-bold">${(calculatePrescriptionTotal(selectedPrescription) - (selectedPrescription.paidAmount || 0)).toFixed(2)}</span>
+                <span className="text-red-600 font-bold">{formatCurrency(calculatePrescriptionTotal(selectedPrescription) - (selectedPrescription.paidAmount || 0))}</span>
               </div>
             </div>
 
@@ -965,5 +1128,3 @@ const PharmacyPrescriptions = () => {
 };
 
 export default PharmacyPrescriptions;
-
-// const confirmDispense = async () => {

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Inventory } = require('../models/Inventory'); // Fixed import
+const { Inventory } = require('../models/Inventory');
 const { protect, authorize } = require('../middleware/auth');
 
 // @route   GET /api/inventory
@@ -23,7 +23,6 @@ router.get('/', protect, authorize('pharmacy', 'superadmin', 'doctor'), async (r
       query.category = category;
     }
 
-    // Fixed stock status filtering
     if (stockStatus === 'low') {
       query.currentStock = { $gt: 0, $lt: 10 };
     } else if (stockStatus === 'out') {
@@ -128,8 +127,18 @@ router.post('/bulk', protect, authorize('pharmacy', 'superadmin'), async (req, r
         continue;
       }
 
+      if (item.cost === undefined || isNaN(item.cost) || item.cost < 0) {
+        results.failed.push({ name: item.name, reason: 'Valid cost is required' });
+        continue;
+      }
+
       if (item.price === undefined || isNaN(item.price) || item.price < 0) {
         results.failed.push({ name: item.name, reason: 'Valid price is required' });
+        continue;
+      }
+
+      if (parseFloat(item.cost) > parseFloat(item.price)) {
+        results.failed.push({ name: item.name, reason: 'Cost cannot be greater than price' });
         continue;
       }
 
@@ -149,6 +158,7 @@ router.post('/bulk', protect, authorize('pharmacy', 'superadmin'), async (req, r
           currentStock: parseInt(item.currentStock),
           minStock: parseInt(item.minStock),
           unit: item.unit || 'tablet',
+          cost: parseFloat(item.cost),
           price: parseFloat(item.price),
           expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
           manufacturer: item.manufacturer || '',
@@ -184,7 +194,7 @@ router.post('/bulk', protect, authorize('pharmacy', 'superadmin'), async (req, r
 // @access  Private (pharmacy, superadmin)
 router.post('/', protect, authorize('pharmacy', 'superadmin'), async (req, res) => {
   try {
-    const { name, category, currentStock, minStock, unit, price, expiryDate, manufacturer, description, location } = req.body;
+    const { name, category, currentStock, minStock, unit, cost, price, expiryDate, manufacturer, description, location } = req.body;
 
     if (!name || name.trim() === '') {
       return res.status(400).json({ success: false, msg: 'Medication name is required' });
@@ -194,8 +204,16 @@ router.post('/', protect, authorize('pharmacy', 'superadmin'), async (req, res) 
       return res.status(400).json({ success: false, msg: 'Valid current stock is required' });
     }
 
+    if (cost === undefined || isNaN(cost) || cost < 0) {
+      return res.status(400).json({ success: false, msg: 'Valid cost is required' });
+    }
+
     if (price === undefined || isNaN(price) || price < 0) {
       return res.status(400).json({ success: false, msg: 'Valid price is required' });
+    }
+
+    if (parseFloat(cost) > parseFloat(price)) {
+      return res.status(400).json({ success: false, msg: 'Cost cannot be greater than price' });
     }
 
     const existing = await Inventory.findOne({ 
@@ -212,6 +230,7 @@ router.post('/', protect, authorize('pharmacy', 'superadmin'), async (req, res) 
       currentStock: parseInt(currentStock),
       minStock: parseInt(minStock) || 10,
       unit: unit || 'tablet',
+      cost: parseFloat(cost),
       price: parseFloat(price),
       expiryDate: expiryDate ? new Date(expiryDate) : null,
       manufacturer: manufacturer || '',
@@ -257,7 +276,7 @@ router.get('/:id', protect, authorize('pharmacy', 'superadmin'), async (req, res
 // @access  Private (pharmacy, superadmin)
 router.put('/:id', protect, authorize('pharmacy', 'superadmin'), async (req, res) => {
   try {
-    const { name, category, currentStock, minStock, unit, price, expiryDate, manufacturer, description, location, isActive } = req.body;
+    const { name, category, currentStock, minStock, unit, cost, price, expiryDate, manufacturer, description, location, isActive } = req.body;
     const itemId = req.params.id;
 
     const item = await Inventory.findById(itemId);
@@ -280,7 +299,18 @@ router.put('/:id', protect, authorize('pharmacy', 'superadmin'), async (req, res
     if (currentStock !== undefined) item.currentStock = parseInt(currentStock);
     if (minStock !== undefined) item.minStock = parseInt(minStock);
     if (unit !== undefined) item.unit = unit;
-    if (price !== undefined) item.price = parseFloat(price);
+    if (cost !== undefined) {
+      if (parseFloat(cost) > item.price) {
+        return res.status(400).json({ success: false, msg: 'Cost cannot be greater than price' });
+      }
+      item.cost = parseFloat(cost);
+    }
+    if (price !== undefined) {
+      if (item.cost > parseFloat(price)) {
+        return res.status(400).json({ success: false, msg: 'Cost cannot be greater than price' });
+      }
+      item.price = parseFloat(price);
+    }
     if (expiryDate !== undefined) item.expiryDate = expiryDate ? new Date(expiryDate) : null;
     if (manufacturer !== undefined) item.manufacturer = manufacturer;
     if (description !== undefined) item.description = description;
@@ -391,12 +421,15 @@ router.delete('/bulk', protect, authorize('pharmacy', 'superadmin'), async (req,
 // @access  Private (pharmacy, superadmin)
 router.get('/stats/overview', protect, authorize('pharmacy', 'superadmin'), async (req, res) => {
   try {
-    const [totalItems, lowStock, outOfStock, totalValue, expiringSoon] = await Promise.all([
+    const [totalItems, lowStock, outOfStock, totalValue, totalCost, expiringSoon] = await Promise.all([
       Inventory.countDocuments(),
       Inventory.countDocuments({ currentStock: { $gt: 0, $lt: 10 } }),
       Inventory.countDocuments({ currentStock: 0 }),
       Inventory.aggregate([
         { $group: { _id: null, total: { $sum: { $multiply: ['$currentStock', '$price'] } } } }
+      ]),
+      Inventory.aggregate([
+        { $group: { _id: null, total: { $sum: { $multiply: ['$currentStock', '$cost'] } } } }
       ]),
       Inventory.countDocuments({ 
         expiryDate: { 
@@ -406,6 +439,8 @@ router.get('/stats/overview', protect, authorize('pharmacy', 'superadmin'), asyn
       })
     ]);
 
+    const totalProfit = (totalValue[0]?.total || 0) - (totalCost[0]?.total || 0);
+
     res.json({
       success: true,
       data: {
@@ -413,6 +448,8 @@ router.get('/stats/overview', protect, authorize('pharmacy', 'superadmin'), asyn
         lowStock,
         outOfStock,
         totalValue: totalValue[0]?.total || 0,
+        totalCost: totalCost[0]?.total || 0,
+        totalProfit,
         expiringSoon
       }
     });

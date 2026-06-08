@@ -1,11 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const LabTest = require('../models/LabTest');
+const LabTestCategory = require('../models/LabTestCategory');
 const { protect, authorize } = require('../middleware/auth');
 
 // @route   GET /api/lab-tests
 // @desc    Get all lab tests
-// @access  Private (lab-tech, doctor, superadmin, reception)
+// @access  Private
 router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'reception'), async (req, res) => {
   try {
     const { search, category, isActive } = req.query;
@@ -32,7 +33,9 @@ router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'receptio
       query.isActive = false;
     }
     
-    const tests = await LabTest.find(query).sort({ name: 1 });
+    const tests = await LabTest.find(query)
+      .populate('category', 'name color')
+      .sort({ name: 1 });
     
     res.json({
       success: true,
@@ -46,25 +49,26 @@ router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'receptio
 });
 
 // @route   POST /api/lab-tests
-// @desc    Create a single lab test (supports single and multi-parameter tests)
+// @desc    Create a single lab test
 // @access  Private (lab-tech)
 router.post('/', protect, authorize('lab-tech'), async (req, res) => {
   try {
     const { 
       name, 
-      category, 
+      category,
       resultType,
       normalRangeMin,
       normalRangeMax,
-      normalRange,
       unit, 
       price, 
       turnaroundTime,
       qualitativeOptions,
       semiQuantitativeOptions,
       categoricalOptions,
-      parameters  // NEW: for multi-parameter tests
+      parameters
     } = req.body;
+    
+    console.log('Received test data:', req.body);
     
     // Validate required fields
     if (!name || !category || !price) {
@@ -72,6 +76,12 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
         success: false, 
         msg: 'Missing required fields: name, category, price' 
       });
+    }
+    
+    // Get category to verify it exists and get name
+    const categoryObj = await LabTestCategory.findById(category);
+    if (!categoryObj) {
+      return res.status(400).json({ success: false, msg: 'Invalid category' });
     }
     
     // For multi-parameter tests, validate parameters
@@ -83,7 +93,6 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
         });
       }
       
-      // Validate each parameter
       for (const param of parameters) {
         if (!param.name) {
           return res.status(400).json({ 
@@ -134,15 +143,16 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
     }
     
     // Generate a unique code
-    const prefix = category.substring(0, 3).toUpperCase();
+    const prefix = categoryObj.name.substring(0, 3).toUpperCase();
     const count = await LabTest.countDocuments({ category });
     const uniqueCode = `${prefix}${String(count + 1).padStart(3, '0')}`;
     
-    // Build the test data based on result type
+    // Build the test data
     const testData = {
       name: name.trim(),
       code: uniqueCode.toUpperCase(),
-      category,
+      category: category,
+      categoryName: categoryObj.name,
       resultType: resultType || 'quantitative',
       price: parseFloat(price),
       unit: unit || '',
@@ -152,7 +162,7 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       isActive: true
     };
     
-    // Add type-specific fields and generate normalRange display string
+    // Add type-specific fields
     if (resultType === 'quantitative') {
       testData.normalRangeMin = normalRangeMin ? parseFloat(normalRangeMin) : null;
       testData.normalRangeMax = normalRangeMax ? parseFloat(normalRangeMax) : null;
@@ -171,7 +181,6 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       testData.normalRange = (categoricalOptions || []).join(', ');
     }
     else if (resultType === 'multi') {
-      // Process and format parameters
       testData.parameters = parameters.map(param => ({
         name: param.name,
         resultType: param.resultType,
@@ -184,12 +193,12 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       }));
       testData.normalRange = `${parameters.length} parameter(s)`;
     }
-    else {
-      testData.normalRange = normalRange || '';
-    }
     
     const test = new LabTest(testData);
     await test.save();
+    
+    // Populate category for response
+    await test.populate('category', 'name color');
     
     res.status(201).json({
       success: true,
@@ -200,10 +209,9 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
     console.error('Create lab test error:', error);
     
     if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
         success: false, 
-        msg: `${field} already exists. Please use a different value.` 
+        msg: 'Test name already exists. Please use a different name.' 
       });
     }
     
@@ -228,7 +236,7 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
       qualitativeOptions,
       semiQuantitativeOptions,
       categoricalOptions,
-      parameters,  // NEW: for multi-parameter tests
+      parameters,
       isActive 
     } = req.body;
     
@@ -251,14 +259,25 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
       test.name = name.trim();
     }
     
-    if (category) test.category = category;
+    // If category is changing, get new category name
+    let categoryName = test.categoryName;
+    if (category && category !== test.category.toString()) {
+      const categoryObj = await LabTestCategory.findById(category);
+      if (!categoryObj) {
+        return res.status(400).json({ success: false, msg: 'Invalid category' });
+      }
+      categoryName = categoryObj.name;
+      test.category = category;
+      test.categoryName = categoryName;
+    }
+    
     if (resultType) test.resultType = resultType;
     if (price) test.price = parseFloat(price);
     if (unit !== undefined) test.unit = unit;
     if (turnaroundTime !== undefined) test.turnaroundTime = turnaroundTime;
     if (isActive !== undefined) test.isActive = isActive;
     
-    // Update type-specific fields and normalRange
+    // Update type-specific fields
     if (resultType === 'quantitative') {
       test.normalRangeMin = normalRangeMin ? parseFloat(normalRangeMin) : null;
       test.normalRangeMax = normalRangeMax ? parseFloat(normalRangeMax) : null;
@@ -292,6 +311,9 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
     
     await test.save();
     
+    // Populate category for response
+    await test.populate('category', 'name color');
+    
     res.json({
       success: true,
       msg: 'Lab test updated successfully',
@@ -299,7 +321,7 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
     });
   } catch (error) {
     console.error('Update lab test error:', error);
-    res.status(500).json({ success: false, msg: 'Server error' });
+    res.status(500).json({ success: false, msg: 'Server error: ' + error.message });
   }
 });
 
@@ -330,7 +352,7 @@ router.delete('/:id', protect, authorize('lab-tech'), async (req, res) => {
 // @access  Private
 router.get('/:id', protect, authorize('lab-tech', 'doctor', 'superadmin', 'reception'), async (req, res) => {
   try {
-    const test = await LabTest.findById(req.params.id);
+    const test = await LabTest.findById(req.params.id).populate('category', 'name color');
     if (!test) {
       return res.status(404).json({ success: false, msg: 'Test not found' });
     }
@@ -355,7 +377,7 @@ router.get('/by-name/:name', protect, authorize('lab-tech', 'doctor', 'superadmi
     
     const test = await LabTest.findOne({ 
       name: { $regex: new RegExp(`^${testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
-    });
+    }).populate('category', 'name color');
      
     if (!test) {
       return res.status(404).json({ 
@@ -376,5 +398,3 @@ router.get('/by-name/:name', protect, authorize('lab-tech', 'doctor', 'superadmi
 });
 
 module.exports = router;
-
-// if (!name || !category || !price) {

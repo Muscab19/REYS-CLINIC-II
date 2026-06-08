@@ -35,9 +35,13 @@ const LabRequestSchema = new mongoose.Schema({
     required: true
   },
   testCategory: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'LabTestCategory',
+    required: false
+  },
+  testCategoryName: {
     type: String,
-    enum: ['hematology', 'biochemistry', 'microbiology', 'pathology', 'urinalysis', 'other'],
-    default: 'other'
+    default: ''
   },
   parameters: [{
     type: String
@@ -62,6 +66,11 @@ const LabRequestSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  requestSource: {
+    type: String,
+    enum: ['reception', 'doctor', 'walkin', 'consultation'],
+    default: 'reception'
+  },
   
   // Clinical Information
   clinicalInfo: {
@@ -83,7 +92,7 @@ const LabRequestSchema = new mongoose.Schema({
   // Status Tracking
   status: {
     type: String,
-    enum: ['pending', 'in-progress', 'completed', 'cancelled'],
+    enum: ['pending', 'in-progress', 'completed', 'cancelled', 'awaiting-payment'],
     default: 'pending'
   },
   
@@ -109,6 +118,58 @@ const LabRequestSchema = new mongoose.Schema({
     type: Date
   },
   
+  // Payment Information
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'paid', 'partial', 'cancelled'],
+    default: 'pending'
+  },
+  paidAmount: {
+    type: Number,
+    default: 0
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['cash', 'card', 'mobile', 'bank', ''],
+    default: 'cash'
+  },
+  paymentDate: {
+    type: Date
+  },
+  testPrice: {
+    type: Number,
+    default: 0
+  },
+  
+  // Discount Information
+  subtotal: {
+    type: Number,
+    default: 0
+  },
+  discountAmount: {
+    type: Number,
+    default: 0
+  },
+  discountType: {
+    type: String,
+    enum: ['percentage', 'fixed', ''],
+    default: ''
+  },
+  discountValue: {
+    type: Number,
+    default: 0
+  },
+  discountReason: {
+    type: String,
+    default: ''
+  },
+  
+  // Reference to consultation (if from doctor)
+  consultationId: {
+    type: String,
+    default: ''
+  },
+  
   // Timestamps
   createdAt: {
     type: Date,
@@ -122,6 +183,14 @@ const LabRequestSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Indexes for better query performance
+LabRequestSchema.index({ requestId: 1 });
+LabRequestSchema.index({ patientId: 1 });
+LabRequestSchema.index({ status: 1 });
+LabRequestSchema.index({ requestSource: 1 });
+LabRequestSchema.index({ paymentStatus: 1 });
+LabRequestSchema.index({ requestDate: 1 });
+
 // Pre-save middleware to generate unique requestId
 LabRequestSchema.pre('save', async function(next) {
   if (!this.requestId) {
@@ -131,22 +200,49 @@ LabRequestSchema.pre('save', async function(next) {
       
       let nextNumber = 1;
       if (lastRequest && lastRequest.requestId) {
-        const lastNumber = parseInt(lastRequest.requestId.split('-')[1]);
-        if (!isNaN(lastNumber)) {
-          nextNumber = lastNumber + 1;
+        const match = lastRequest.requestId.match(/LAB-(\d+)/);
+        if (match && match[1]) {
+          const lastNumber = parseInt(match[1]);
+          if (!isNaN(lastNumber)) {
+            nextNumber = lastNumber + 1;
+          }
         }
       }
       
-      // Add timestamp milliseconds to ensure uniqueness for parallel requests
-      const timestamp = Date.now().toString().slice(-4);
-      this.requestId = `LAB-${nextNumber.toString().padStart(6, '0')}-${timestamp}`;
+      // Add prefix based on request source
+      const prefix = this.requestSource === 'reception' ? 'RXC' : 
+                     this.requestSource === 'doctor' ? 'DOC' : 
+                     this.requestSource === 'walkin' ? 'WLK' : 'LAB';
+      
+      this.requestId = `${prefix}-${nextNumber.toString().padStart(6, '0')}`;
     } catch (error) {
       console.error('Error generating requestId:', error);
       // Fallback to timestamp-based ID
-      this.requestId = `LAB-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+      const prefix = this.requestSource === 'reception' ? 'RXC' : 'LAB';
+      this.requestId = `${prefix}-${Date.now()}`;
     }
   }
   next();
 });
 
-module.exports = mongoose.model('LabRequest', LabRequestSchema); 
+// Pre-save middleware to update timestamps
+LabRequestSchema.pre('save', function(next) {
+  this.updatedAt = new Date();
+  next();
+});
+
+// Virtual for total amount after discount
+LabRequestSchema.virtual('totalAfterDiscount').get(function() {
+  return this.testPrice - (this.discountAmount || 0);
+});
+
+// Virtual for remaining amount
+LabRequestSchema.virtual('remainingAmount').get(function() {
+  return this.testPrice - (this.paidAmount || 0);
+});
+
+// Ensure virtuals are included in JSON output
+LabRequestSchema.set('toJSON', { virtuals: true });
+LabRequestSchema.set('toObject', { virtuals: true });
+
+module.exports = mongoose.model('LabRequest', LabRequestSchema);

@@ -168,6 +168,29 @@ const patientSchema = new mongoose.Schema({
     default: 0
   },
   
+  // Discount Information
+  subtotal: {
+    type: Number,
+    default: 0
+  },
+  discountAmount: {
+    type: Number,
+    default: 0
+  },
+  discountType: {
+    type: String,
+    enum: ['percentage', 'fixed', ''],
+    default: ''
+  },
+  discountValue: {
+    type: Number,
+    default: 0
+  },
+  discountReason: {
+    type: String,
+    default: ''
+  },
+  
   // Follow-up Information
   isFollowUp: {
     type: Boolean,

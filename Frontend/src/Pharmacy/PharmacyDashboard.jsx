@@ -99,7 +99,8 @@ const PharmacyDashboard = () => {
     { id: 'prescriptions', label: 'Prescriptions', icon: <FileText className="w-5 h-5" />, path: '/pharmacy-prescriptions' },
     { id: 'inventory', label: 'Inventory', icon: <Package className="w-5 h-5" />, path: '/pharmacy-inventory' },
     { id: 'walkin-sales', label: 'Walk-in Sales', icon: <Store className="w-5 h-5" />, path: '/sales' },
-    { id: 'sales-history', label: 'Sales History', icon: <History className="w-5 h-5" />, path: '/sales-history' }
+    { id: 'sales-history', label: 'Sales History', icon: <History className="w-5 h-5" />, path: '/sales-history' },
+    { id: 'pharmacy-revenue', label: 'Pharmacy Revenue', icon: <DollarSign className="w-5 h-5" />, path: '/pharmacy-revenue' }
   ];
 
   if (!isAuthenticated || user?.role !== 'pharmacy') {
@@ -140,7 +141,7 @@ const PharmacyDashboard = () => {
             </div>
           </div>
           
-          <nav className="space-y-2">
+          <nav className="space-y-0">
             {menuItems.map(item => (
               <Link
                 key={item.id}

@@ -37,6 +37,7 @@ import PharmacyPrescriptions from './Pharmacy/Pages/PharmacyPrescriptions';
 import Inventory from './Pharmacy/Pages/Inventory';
 import WalkInSales from './Pharmacy/Pages/WalkInSales';
 import SalesHistory from './Pharmacy/Pages/SalesHistory ';
+import PharmacyRevenue from './Pharmacy/Pages/PharmacyRevenue';
 
 // Lab-Tech Dashboard
 import LabTechTests from './Lab-Tech/Pages/LabTechTests';
@@ -176,6 +177,12 @@ function App() {
             <Route path="/sales-history" element={
               <ProtectedRoute allowedRoles={['pharmacy']}>
                 <SalesHistory />
+              </ProtectedRoute>
+            } />
+
+            <Route path="pharmacy-revenue" element={
+              <ProtectedRoute allowedRoles={['pharmacy']}>
+                <PharmacyRevenue />
               </ProtectedRoute>
             } />
 

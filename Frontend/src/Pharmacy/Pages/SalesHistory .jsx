@@ -48,7 +48,9 @@ import {
   Building,
   History,
   FileCheck,
-  Users
+  Users,
+  Percent,
+  PieChart
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -83,6 +85,9 @@ const SalesHistory = () => {
   const [stats, setStats] = useState({
     totalSales: 0,
     totalRevenue: 0,
+    totalCost: 0,
+    totalProfit: 0,
+    averageMargin: 0,
     paidSales: 0,
     partialSales: 0,
     unpaidSales: 0,
@@ -91,7 +96,9 @@ const SalesHistory = () => {
     mobileSales: 0,
     bankSales: 0,
     walkinSales: 0,
-    prescriptionSales: 0
+    prescriptionSales: 0,
+    topSellingProduct: '',
+    topProfitProduct: ''
   });
 
   // Check if user is pharmacist
@@ -110,6 +117,48 @@ const SalesHistory = () => {
   useEffect(() => {
     fetchSales();
   }, []);
+
+  // Helper function to get cost of an item (fetch from inventory if needed)
+  const getItemCost = async (itemName) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/inventory?search=${encodeURIComponent(itemName)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (data.success && data.data.length > 0) {
+        return data.data[0].cost || 0;
+      }
+      return 0;
+    } catch (error) {
+      console.error('Error fetching item cost:', error);
+      return 0;
+    }
+  };
+
+  // Calculate profit for a sale
+  const calculateSaleProfit = async (sale) => {
+    let totalCost = 0;
+    let totalRevenue = sale.total || sale.subtotal || 0;
+    
+    if (sale.items && sale.items.length > 0) {
+      for (const item of sale.items) {
+        // If item has cost already stored, use it
+        if (item.cost) {
+          totalCost += item.cost * item.quantity;
+        } else {
+          // Try to get cost from inventory
+          const cost = await getItemCost(item.name);
+          totalCost += cost * item.quantity;
+        }
+      }
+    }
+    
+    const profit = totalRevenue - totalCost;
+    const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
+    
+    return { cost: totalCost, profit, margin };
+  };
 
   const fetchSales = async () => {
     setLoading(true);
@@ -132,12 +181,19 @@ const SalesHistory = () => {
         console.log('API sales not available, using local data only');
       }
       
-      // Combine sales and add payment tracking
-      const allSales = [...localSales, ...apiSales].map(sale => ({
-        ...sale,
-        remainingAmount: sale.total - (sale.paidAmount || sale.total),
-        paymentStatus: getPaymentStatus(sale)
-      }));
+      // Combine sales and add payment tracking and profit calculation
+      const allSales = [];
+      for (const sale of [...localSales, ...apiSales]) {
+        const profitData = await calculateSaleProfit(sale);
+        allSales.push({
+          ...sale,
+          remainingAmount: sale.total - (sale.paidAmount || sale.total || 0),
+          paymentStatus: getPaymentStatus(sale),
+          cost: profitData.cost,
+          profit: profitData.profit,
+          margin: profitData.margin
+        });
+      }
       
       setSales(allSales);
       calculateStats(allSales);
@@ -150,7 +206,7 @@ const SalesHistory = () => {
   };
 
   const getPaymentStatus = (sale) => {
-    const total = sale.total || sale.subtotal;
+    const total = sale.total || sale.subtotal || 0;
     const paid = sale.paidAmount || 0;
     
     if (paid >= total) return 'paid';
@@ -159,8 +215,11 @@ const SalesHistory = () => {
   };
 
   const calculateStats = (salesList) => {
-    const totalRevenue = salesList.reduce((sum, sale) => sum + (sale.paidAmount || 0), 0);
+    const totalRevenue = salesList.reduce((sum, sale) => sum + (sale.total || sale.subtotal || 0), 0);
+    const totalCost = salesList.reduce((sum, sale) => sum + (sale.cost || 0), 0);
+    const totalProfit = salesList.reduce((sum, sale) => sum + (sale.profit || 0), 0);
     const totalOutstanding = salesList.reduce((sum, sale) => sum + (sale.remainingAmount || 0), 0);
+    const avgMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
     
     const paidSales = salesList.filter(s => getPaymentStatus(s) === 'paid').length;
     const partialSales = salesList.filter(s => getPaymentStatus(s) === 'partial').length;
@@ -173,9 +232,33 @@ const SalesHistory = () => {
     const walkinSales = salesList.filter(s => s.saleType === 'walkin' || !s.saleType).length;
     const prescriptionSales = salesList.filter(s => s.saleType === 'prescription').length;
     
+    // Calculate top selling product
+    const productSales = {};
+    const productProfit = {};
+    salesList.forEach(sale => {
+      if (sale.items) {
+        sale.items.forEach(item => {
+          const productName = item.name;
+          const quantity = item.quantity || 0;
+          const revenue = (item.price || 0) * quantity;
+          const cost = (item.cost || 0) * quantity;
+          const profit = revenue - cost;
+          
+          productSales[productName] = (productSales[productName] || 0) + quantity;
+          productProfit[productName] = (productProfit[productName] || 0) + profit;
+        });
+      }
+    });
+    
+    const topSelling = Object.entries(productSales).sort((a, b) => b[1] - a[1])[0];
+    const topProfit = Object.entries(productProfit).sort((a, b) => b[1] - a[1])[0];
+    
     setStats({
       totalSales: salesList.length,
       totalRevenue,
+      totalCost,
+      totalProfit,
+      averageMargin: avgMargin,
       paidSales,
       partialSales,
       unpaidSales,
@@ -184,7 +267,9 @@ const SalesHistory = () => {
       mobileSales,
       bankSales,
       walkinSales,
-      prescriptionSales
+      prescriptionSales,
+      topSellingProduct: topSelling ? topSelling[0] : 'N/A',
+      topProfitProduct: topProfit ? topProfit[0] : 'N/A'
     });
   };
 
@@ -207,7 +292,7 @@ const SalesHistory = () => {
   const confirmPayment = async () => {
     if (!selectedSale) return;
     
-    const totalAmount = selectedSale.total || selectedSale.subtotal;
+    const totalAmount = selectedSale.total || selectedSale.subtotal || 0;
     const currentPaid = selectedSale.paidAmount || 0;
     const remaining = totalAmount - currentPaid;
     const payment = parseFloat(paymentAmount);
@@ -303,6 +388,10 @@ const SalesHistory = () => {
     });
   };
 
+  const formatCurrency = (amount) => {
+    return `$${(amount || 0).toFixed(2)}`;
+  };
+
   const filteredSales = sales.filter(sale => {
     const matchesSearch = 
       sale.saleId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -343,7 +432,10 @@ const SalesHistory = () => {
       'Date': formatDate(sale.date),
       'Type': sale.saleType || 'Walk-in',
       'Items': sale.items?.map(i => `${i.name} x${i.quantity}`).join(', '),
-      'Total': sale.total || sale.subtotal,
+      'Revenue': sale.total || sale.subtotal,
+      'Cost': sale.cost || 0,
+      'Profit': sale.profit || 0,
+      'Margin %': sale.margin ? sale.margin.toFixed(1) : '0',
       'Paid': sale.paidAmount || 0,
       'Remaining': (sale.total || sale.subtotal) - (sale.paidAmount || 0),
       'Payment Status': getPaymentStatus(sale),
@@ -383,7 +475,7 @@ const SalesHistory = () => {
 
   if (!isAuthenticated || user?.role !== 'pharmacy') {
     return (
-      <div className="min-h-screen flex items-center justifyContent-center">
+      <div className="min-h-screen flex items-center justify-center">
         <Loader className="w-8 h-8 animate-spin text-[#D01A2B]" />
       </div>
     );
@@ -403,7 +495,7 @@ const SalesHistory = () => {
                 <img src={logo} alt="REYS CLINIC Logo" className="h-10 w-auto object-contain" />
                 <div>
                   <h1 className="text-xl font-bold text-[#D01A2B]">REYS CLINIC</h1>
-                  <p className="text-xs text-gray-500">Sales History & Payment Tracking</p>
+                  <p className="text-xs text-gray-500">Sales History & Profit Analytics</p>
                 </div>
               </div>
             </div>
@@ -423,7 +515,7 @@ const SalesHistory = () => {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats Cards */}
+        {/* Stats Cards - Row 1 */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
           <div className="bg-white rounded-xl p-4 shadow-sm">
             <div className="flex items-center justify-between mb-2">
@@ -440,44 +532,88 @@ const SalesHistory = () => {
                 <DollarSign className="w-5 h-5 text-green-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-green-600">${stats.totalRevenue.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-green-600">{formatCurrency(stats.totalRevenue)}</p>
             <p className="text-sm text-green-600">Total Revenue</p>
           </div>
           <div className="bg-red-50 rounded-xl p-4 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
-                <AlertCircle className="w-5 h-5 text-red-600" />
+                <TrendingDown className="w-5 h-5 text-red-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-red-600">${stats.totalOutstanding.toFixed(2)}</p>
-            <p className="text-sm text-red-600">Outstanding</p>
-          </div>
-          <div className="bg-yellow-50 rounded-xl p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-yellow-600" />
-              </div>
-            </div>
-            <p className="text-2xl font-bold text-yellow-600">{stats.partialSales}</p>
-            <p className="text-sm text-yellow-600">Partial Payments</p>
+            <p className="text-2xl font-bold text-red-600">{formatCurrency(stats.totalCost)}</p>
+            <p className="text-sm text-red-600">Total Cost</p>
           </div>
           <div className="bg-purple-50 rounded-xl p-4 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                <Wallet className="w-5 h-5 text-purple-600" />
+                <TrendingUp className="w-5 h-5 text-purple-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-purple-600">{stats.unpaidSales}</p>
-            <p className="text-sm text-purple-600">Unpaid</p>
+            <p className="text-2xl font-bold text-purple-600">{formatCurrency(stats.totalProfit)}</p>
+            <p className="text-sm text-purple-600">Total Profit</p>
           </div>
           <div className="bg-indigo-50 rounded-xl p-4 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                <CheckCircle className="w-5 h-5 text-indigo-600" />
+                <Percent className="w-5 h-5 text-indigo-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-indigo-600">{stats.paidSales}</p>
-            <p className="text-sm text-indigo-600">Fully Paid</p>
+            <p className="text-2xl font-bold text-indigo-600">{stats.averageMargin.toFixed(1)}%</p>
+            <p className="text-sm text-indigo-600">Avg. Margin</p>
+          </div>
+          <div className="bg-orange-50 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-orange-600" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-orange-600">{formatCurrency(stats.totalOutstanding)}</p>
+            <p className="text-sm text-orange-600">Outstanding</p>
+          </div>
+        </div>
+
+        {/* Stats Cards - Row 2 (Payment Status & Top Products) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                <CheckCircle className="w-4 h-4 text-green-600" />
+              </div>
+              <span className="text-2xl font-bold text-green-600">{stats.paidSales}</span>
+            </div>
+            <p className="text-sm text-gray-600">Fully Paid</p>
+          </div>
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-8 h-8 bg-yellow-100 rounded-lg flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-yellow-600" />
+              </div>
+              <span className="text-2xl font-bold text-yellow-600">{stats.partialSales}</span>
+            </div>
+            <p className="text-sm text-gray-600">Partial Payments</p>
+          </div>
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                <Package className="w-4 h-4 text-purple-600" />
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-semibold text-gray-900 truncate">{stats.topSellingProduct}</p>
+                <p className="text-xs text-gray-500">Top Selling</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                <TrendingUp className="w-4 h-4 text-green-600" />
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-semibold text-gray-900 truncate">{stats.topProfitProduct}</p>
+                <p className="text-xs text-gray-500">Top Profit</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -554,21 +690,22 @@ const SalesHistory = () => {
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Sale ID</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Date</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Items</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Total</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Revenue</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Cost</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Profit</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Margin</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Paid</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Remaining</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Payment</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Method</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Sold By</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {currentSales.map((sale) => {
-                      const total = sale.total || sale.subtotal;
+                      const total = sale.total || sale.subtotal || 0;
                       const paid = sale.paidAmount || 0;
-                      const remaining = total - paid;
-                      const paymentStatus = getPaymentStatus(sale);
+                      const profit = sale.profit || 0;
+                      const margin = sale.margin || 0;
                       
                       return (
                         <tr key={sale.id || sale._id} className="hover:bg-gray-50">
@@ -586,38 +723,48 @@ const SalesHistory = () => {
                               )}
                             </div>
                           </td>
-                          <td className="px-6 py-4 font-semibold">${total.toFixed(2)}</td>
-                          <td className="px-6 py-4 text-green-600">${paid.toFixed(2)}</td>
+                          <td className="px-6 py-4 font-semibold text-green-600">{formatCurrency(total)}</td>
+                          <td className="px-6 py-4 text-red-600">{formatCurrency(sale.cost || 0)}</td>
                           <td className="px-6 py-4">
-                            <span className={remaining > 0 ? 'text-red-600 font-semibold' : 'text-green-600'}>
-                              ${remaining.toFixed(2)}
+                            <span className={`font-semibold ${profit >= 0 ? 'text-purple-600' : 'text-red-600'}`}>
+                              {formatCurrency(profit)}
                             </span>
-                           </td>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${
+                              margin >= 50 ? 'bg-green-100 text-green-700' :
+                              margin >= 25 ? 'bg-blue-100 text-blue-700' :
+                              margin >= 10 ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {margin.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-green-600">{formatCurrency(paid)}</td>
                           <td className="px-6 py-4">{getPaymentStatusBadge(sale)}</td>
                           <td className="px-6 py-4">
                             <div className="flex items-center space-x-1">
                               {getPaymentMethodIcon(sale.paymentMethod)}
                               <span className="text-sm capitalize">{sale.paymentMethod}</span>
                             </div>
-                           </td>
-                          <td className="px-6 py-4 text-gray-600">{sale.soldBy || sale.soldByName || 'N/A'}</td>
+                          </td>
                           <td className="px-6 py-4">
                             <div className="flex space-x-2">
                               <button onClick={() => handleViewDetails(sale)} className="p-1 text-blue-600 hover:bg-blue-50 rounded" title="View Details">
                                 <Eye className="w-4 h-4" />
                               </button>
-                              {paymentStatus !== 'paid' && (
+                              {getPaymentStatus(sale) !== 'paid' && (
                                 <button onClick={() => handleMakePayment(sale)} className="p-1 text-green-600 hover:bg-green-50 rounded" title="Make Payment">
                                   <DollarSign className="w-4 h-4" />
                                 </button>
                               )}
                             </div>
-                           </td>
-                         </tr>
+                          </td>
+                        </tr>
                       );
                     })}
                   </tbody>
-                 </table>
+                </table>
               </div>
 
               {filteredSales.length === 0 && (
@@ -682,7 +829,7 @@ const SalesHistory = () => {
                 </div>
               </div>
 
-              {/* Items */}
+              {/* Items with Profit Breakdown */}
               <div className="mb-6">
                 <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
                   <Package className="w-4 h-4 text-[#D01A2B]" />
@@ -691,20 +838,51 @@ const SalesHistory = () => {
                 <div className="bg-gray-50 rounded-xl overflow-hidden">
                   <table className="w-full">
                     <thead className="bg-gray-100">
-                      <tr><th className="px-4 py-2 text-left text-sm font-semibold">Product</th><th className="px-4 py-2 text-center text-sm font-semibold">Qty</th><th className="px-4 py-2 text-right text-sm font-semibold">Price</th><th className="px-4 py-2 text-right text-sm font-semibold">Subtotal</th></tr>
+                      <tr>
+                        <th className="px-4 py-2 text-left text-sm font-semibold">Product</th>
+                        <th className="px-4 py-2 text-center text-sm font-semibold">Qty</th>
+                        <th className="px-4 py-2 text-right text-sm font-semibold">Cost</th>
+                        <th className="px-4 py-2 text-right text-sm font-semibold">Price</th>
+                        <th className="px-4 py-2 text-right text-sm font-semibold">Profit</th>
+                        <th className="px-4 py-2 text-right text-sm font-semibold">Margin</th>
+                      </tr>
                     </thead>
                     <tbody>
-                      {selectedSale.items?.map((item, idx) => (
-                        <tr key={idx} className="border-t">
-                          <td className="px-4 py-2 text-sm">{item.name}</td>
-                          <td className="px-4 py-2 text-center text-sm">{item.quantity}</td>
-                          <td className="px-4 py-2 text-right text-sm">${item.price.toFixed(2)}</td>
-                          <td className="px-4 py-2 text-right text-sm font-semibold">${(item.price * item.quantity).toFixed(2)}</td>
-                         </tr>
-                      ))}
+                      {selectedSale.items?.map((item, idx) => {
+                        const itemCost = item.cost || 0;
+                        const itemPrice = item.price || 0;
+                        const itemProfit = (itemPrice - itemCost) * item.quantity;
+                        const itemMargin = itemPrice > 0 ? ((itemPrice - itemCost) / itemPrice * 100) : 0;
+                        return (
+                          <tr key={idx} className="border-t">
+                            <td className="px-4 py-2 text-sm">{item.name}</td>
+                            <td className="px-4 py-2 text-center text-sm">{item.quantity}</td>
+                            <td className="px-4 py-2 text-right text-sm text-red-600">${itemCost.toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right text-sm text-green-600">${itemPrice.toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right text-sm text-purple-600">${itemProfit.toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right text-sm">
+                              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                                itemMargin >= 50 ? 'bg-green-100 text-green-700' :
+                                itemMargin >= 25 ? 'bg-blue-100 text-blue-700' :
+                                'bg-yellow-100 text-yellow-700'
+                              }`}>
+                                {itemMargin.toFixed(1)}%
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                     <tfoot className="bg-gray-100">
-                      <tr><td colSpan="3" className="px-4 py-2 text-right font-semibold">Total:</td><td className="px-4 py-2 text-right font-bold text-[#D01A2B]">${(selectedSale.total || selectedSale.subtotal).toFixed(2)}</td></tr>
+                      <tr>
+                        <td colSpan="2" className="px-4 py-2 text-right font-semibold">Totals:</td>
+                        <td className="px-4 py-2 text-right font-semibold text-red-600">{formatCurrency(selectedSale.cost || 0)}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-green-600">{formatCurrency(selectedSale.total || selectedSale.subtotal || 0)}</td>
+                        <td className="px-4 py-2 text-right font-bold text-purple-600">{formatCurrency(selectedSale.profit || 0)}</td>
+                        <td className="px-4 py-2 text-right">
+                          <span className="font-bold text-indigo-600">{((selectedSale.profit || 0) / (selectedSale.total || 1) * 100).toFixed(1)}%</span>
+                        </td>
+                      </tr>
                     </tfoot>
                   </table>
                 </div>
@@ -717,9 +895,30 @@ const SalesHistory = () => {
                   <span>Payment Summary</span>
                 </h4>
                 <div className="grid grid-cols-3 gap-4 bg-gray-50 rounded-xl p-4">
-                  <div><p className="text-sm text-gray-500">Total Amount</p><p className="text-xl font-bold">${(selectedSale.total || selectedSale.subtotal).toFixed(2)}</p></div>
-                  <div><p className="text-sm text-gray-500">Paid Amount</p><p className="text-xl font-bold text-green-600">${(selectedSale.paidAmount || 0).toFixed(2)}</p></div>
-                  <div><p className="text-sm text-gray-500">Remaining</p><p className="text-xl font-bold text-red-600">${((selectedSale.total || selectedSale.subtotal) - (selectedSale.paidAmount || 0)).toFixed(2)}</p></div>
+                  <div>
+                    <p className="text-sm text-gray-500">Total Revenue</p>
+                    <p className="text-xl font-bold text-green-600">{formatCurrency(selectedSale.total || selectedSale.subtotal || 0)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Total Cost</p>
+                    <p className="text-xl font-bold text-red-600">{formatCurrency(selectedSale.cost || 0)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Total Profit</p>
+                    <p className="text-xl font-bold text-purple-600">{formatCurrency(selectedSale.profit || 0)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Paid Amount</p>
+                    <p className="text-xl font-bold text-green-600">{formatCurrency(selectedSale.paidAmount || 0)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Remaining</p>
+                    <p className="text-xl font-bold text-red-600">{formatCurrency(((selectedSale.total || selectedSale.subtotal || 0) - (selectedSale.paidAmount || 0)))}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Margin</p>
+                    <p className="text-xl font-bold text-indigo-600">{((selectedSale.profit || 0) / (selectedSale.total || 1) * 100).toFixed(1)}%</p>
+                  </div>
                 </div>
               </div>
 
@@ -733,40 +932,24 @@ const SalesHistory = () => {
                   <div className="bg-gray-50 rounded-xl overflow-hidden">
                     <table className="w-full">
                       <thead className="bg-gray-100">
-                        <tr><th className="px-4 py-2 text-left text-sm font-semibold">Date</th><th className="px-4 py-2 text-right text-sm font-semibold">Amount</th><th className="px-4 py-2 text-left text-sm font-semibold">Method</th><th className="px-4 py-2 text-left text-sm font-semibold">Received By</th></tr>
+                        <tr>
+                          <th className="px-4 py-2 text-left text-sm font-semibold">Date</th>
+                          <th className="px-4 py-2 text-right text-sm font-semibold">Amount</th>
+                          <th className="px-4 py-2 text-left text-sm font-semibold">Method</th>
+                          <th className="px-4 py-2 text-left text-sm font-semibold">Received By</th>
+                        </tr>
                       </thead>
                       <tbody>
                         {selectedSale.paymentHistory.map((payment, idx) => (
                           <tr key={idx} className="border-t">
                             <td className="px-4 py-2 text-sm">{formatDate(payment.date)}</td>
-                            <td className="px-4 py-2 text-right text-sm font-semibold text-green-600">${payment.amount.toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right text-sm font-semibold text-green-600">{formatCurrency(payment.amount)}</td>
                             <td className="px-4 py-2 text-sm capitalize">{payment.method}</td>
                             <td className="px-4 py-2 text-sm">{payment.receivedBy}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Payment Details */}
-              {(selectedSale.paymentMethod === 'mobile' || selectedSale.paymentMethod === 'bank') && (
-                <div className="mb-6">
-                  <h4 className="font-semibold text-gray-900 mb-3 flex items-center space-x-2">
-                    <Smartphone className="w-4 h-4 text-[#D01A2B]" />
-                    <span>Payment Details</span>
-                  </h4>
-                  <div className="bg-gray-50 rounded-xl p-4">
-                    {selectedSale.paymentMethod === 'mobile' && (
-                      <p><strong>Mobile Number:</strong> {selectedSale.paymentDetails?.mobileNumber || 'N/A'}</p>
-                    )}
-                    {selectedSale.paymentMethod === 'bank' && (
-                      <>
-                        <p><strong>Bank Name:</strong> {selectedSale.paymentDetails?.bankName || 'N/A'}</p>
-                        <p><strong>Transaction ID:</strong> {selectedSale.paymentDetails?.transactionId || 'N/A'}</p>
-                      </>
-                    )}
                   </div>
                 </div>
               )}
@@ -813,7 +996,7 @@ const SalesHistory = () => {
             <div className="mb-4 p-3 bg-gray-50 rounded-lg">
               <div className="flex justify-between mb-2">
                 <span className="text-gray-600">Total Amount:</span>
-                <span className="font-bold">${(selectedSale.total || selectedSale.subtotal).toFixed(2)}</span>
+                <span className="font-bold">${(selectedSale.total || selectedSale.subtotal || 0).toFixed(2)}</span>
               </div>
               <div className="flex justify-between mb-2">
                 <span className="text-gray-600">Already Paid:</span>
@@ -821,7 +1004,7 @@ const SalesHistory = () => {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Remaining:</span>
-                <span className="text-red-600 font-bold">${((selectedSale.total || selectedSale.subtotal) - (selectedSale.paidAmount || 0)).toFixed(2)}</span>
+                <span className="text-red-600 font-bold">${((selectedSale.total || selectedSale.subtotal || 0) - (selectedSale.paidAmount || 0)).toFixed(2)}</span>
               </div>
             </div>
 
