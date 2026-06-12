@@ -1186,7 +1186,7 @@ const handleCompleteConsultation = async () => {
       doctorName: user.name,
       doctorId: user.id,
       date: new Date().toISOString(),
-      status: 'completed',
+      status: selectedLabTests.length > 0 ? 'pending_payment' : 'completed',
       diagnoses: selectedDiagnoses.map(d => d.name),
       labTestsRequested: selectedLabTests.map(test => ({
         id: test._id,
@@ -1196,8 +1196,11 @@ const handleCompleteConsultation = async () => {
         price: test.price || 0,
         category: test.category || 'General',
         requestedBy: `Dr. ${user.name}`,
-        requestedAt: new Date().toISOString()
+        requestedAt: new Date().toISOString(),
+        paid: false,  // Important: Mark as not paid yet
+        status: 'pending'
       })),
+      labPaymentStatus: 'pending',  // Important: Set payment status to pending
       medications: selectedMedications,
       notes: consultationData.notes,
       treatment: consultationData.treatment,
@@ -1229,8 +1232,9 @@ const handleCompleteConsultation = async () => {
     existingConsultations.push(consultationRecord);
     localStorage.setItem('consultations', JSON.stringify(existingConsultations));
     
-    // Update patient status to COMPLETED (not pending-payment)
-    const statusUpdated = await updatePatientStatus(selectedPatient._id, 'completed');
+    // Update patient status
+    const newPatientStatus = selectedLabTests.length > 0 ? 'pending-payment' : 'completed';
+    const statusUpdated = await updatePatientStatus(selectedPatient._id, newPatientStatus);
     
     if (!statusUpdated) {
       toast.warning('Patient status update failed. Please try again.');
@@ -1245,7 +1249,7 @@ const handleCompleteConsultation = async () => {
     setPatients(prevPatients => 
       prevPatients.map(p => 
         p._id === selectedPatient._id 
-          ? { ...p, status: 'completed' }
+          ? { ...p, status: newPatientStatus }
           : p
       )
     );
@@ -1253,7 +1257,7 @@ const handleCompleteConsultation = async () => {
     toast.dismiss(loadingToast);
     
     if (selectedLabTests.length > 0) {
-      toast.success(`Consultation completed! ${selectedLabTests.length} lab test request(s) sent to laboratory.`);
+      toast.success(`Consultation completed! ${selectedLabTests.length} lab test request(s) sent. Payment required at reception.`);
     } else {
       toast.success('Consultation completed successfully!');
     }
@@ -1261,7 +1265,7 @@ const handleCompleteConsultation = async () => {
     setShowConsultationModal(false);
     setSelectedPatient(null);
     
-    // Refresh the patient list from server
+    // Refresh the patient list
     await fetchPatients();
     
   } catch (error) {
@@ -1272,80 +1276,63 @@ const handleCompleteConsultation = async () => {
 };
 
   const sendLabTestRequests = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      let successCount = 0;
+  try {
+    const token = localStorage.getItem('token');
+    let successCount = 0;
+    
+    for (const test of selectedLabTests) {
+      // Get test price from labTestsList
+      const testDetails = labTestsList.find(t => t._id === test._id);
+      const testPrice = testDetails?.price || 0;
       
-      for (const test of selectedLabTests) {
-        if (test.isCustom) {
-          const labRequestData = {
-            patientId: selectedPatient._id,
-            patientName: selectedPatient.childName,
-            patientAge: selectedPatient.childAge,
-            parentName: selectedPatient.parentName,
-            parentPhone: selectedPatient.parentPhone,
-            testName: test.name,
-            testCategory: 'other',
-            parameters: ['Result'],
-            normalRanges: {},
-            clinicalInfo: test.notes || consultationData.chiefComplaint || '',
-            notes: consultationData.notes || '',
-            priority: 'normal',
-            requestedBy: `Dr. ${user.name}`,
-            requestedById: user.id
-          };
-          
-          const response = await fetch(`${API_BASE_URL}/api/lab-requests`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(labRequestData)
-          });
-          
-          const data = await response.json();
-          if (data.success) successCount++;
-        } else {
-          const testDetails = labTestsList.find(t => t._id === test._id);
-          const labRequestData = {
-            patientId: selectedPatient._id,
-            patientName: selectedPatient.childName,
-            patientAge: selectedPatient.childAge,
-            parentName: selectedPatient.parentName,
-            parentPhone: selectedPatient.parentPhone,
-            testName: test.name,
-            testCategory: test.category || 'other',
-            parameters: testDetails?.parameters || test.parameters || ['Result'],
-            normalRanges: testDetails?.normalRanges || test.normalRanges || {},
-            clinicalInfo: consultationData.chiefComplaint || '',
-            notes: consultationData.notes || '',
-            priority: 'normal',
-            requestedBy: `Dr. ${user.name}`,
-            requestedById: user.id
-          };
-          
-          const response = await fetch(`${API_BASE_URL}/api/lab-requests`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(labRequestData)
-          });
-          
-          const data = await response.json();
-          if (data.success) successCount++;
-        }
-      }
+      const labRequestData = {
+        patientId: selectedPatient._id,
+        patientName: selectedPatient.childName,
+        patientAge: selectedPatient.childAge,
+        parentName: selectedPatient.parentName,
+        parentPhone: selectedPatient.parentPhone,
+        testName: test.name,
+        testCategory: test.category || (testDetails?.category?.name || testDetails?.categoryName || 'general'),
+        parameters: testDetails?.parameters || ['Result'],
+        normalRanges: testDetails?.normalRanges || {},
+        clinicalInfo: consultationData.chiefComplaint || '',
+        notes: consultationData.notes || '',
+        priority: 'normal',
+        requestedBy: `Dr. ${user.name}`,
+        requestedById: user.id,
+        requestSource: 'doctor',
+        paymentStatus: 'pending',  // Important: Payment pending
+        testPrice: testPrice,
+        status: 'pending'
+      };
       
-      if (successCount > 0) {
-        console.log(`${successCount} lab test request(s) sent to laboratory`);
+      const response = await fetch(`${API_BASE_URL}/api/lab-requests`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(labRequestData)
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        successCount++;
+        console.log(`Lab request created for ${test.name}:`, data.data.requestId);
+      } else {
+        console.error(`Failed to create lab request for ${test.name}:`, data.msg);
       }
-    } catch (error) {
-      console.error('Error sending lab test requests:', error);
     }
-  };
+    
+    if (successCount > 0) {
+      console.log(`${successCount} lab test request(s) sent to laboratory`);
+    }
+    return successCount;
+  } catch (error) {
+    console.error('Error sending lab test requests:', error);
+    return 0;
+  }
+};
 
   const sendPrescriptionsToPharmacy = async () => {
   try {

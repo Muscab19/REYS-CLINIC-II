@@ -14,14 +14,6 @@ import logo from '../../assets/logo.png';
 const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || (isLocal ? 'http://localhost:3000' : 'https://reysclinic.com');
 
-// Helper function to generate sequential patient ID - SAME FOR BOTH DOCTOR AND LAB
-const generatePatientId = () => {
-  const lastPatientId = localStorage.getItem('lastPatientId') || '0';
-  const nextNumber = parseInt(lastPatientId) + 1;
-  localStorage.setItem('lastPatientId', nextNumber.toString());
-  return `P-${nextNumber.toString().padStart(5, '0')}`;
-};
-
 // Helper function to get category name safely
 const getCategoryName = (test) => {
   if (test.categoryName) return test.categoryName;
@@ -229,8 +221,11 @@ const RegisterPatient = () => {
     if (discountValue <= 0) return 0;
     
     if (discountType === 'percentage') {
-      return (subtotal * discountValue) / 100;
+      // Allow up to 100% discount
+      const maxDiscount = Math.min(discountValue, 100);
+      return (subtotal * maxDiscount) / 100;
     } else {
+      // For fixed amount, allow full subtotal discount (can be $0)
       return Math.min(discountValue, subtotal);
     }
   };
@@ -309,7 +304,7 @@ const RegisterPatient = () => {
 
   const handleProcessPayment = () => {
     const total = calculateTotalFee();
-    if (total > 0) {
+    if (total >= 0) {  // Allow $0 payments
       setPaymentAmount(total.toString());
       setShowPaymentModal(true);
     } else {
@@ -318,32 +313,40 @@ const RegisterPatient = () => {
   };
 
   const confirmPayment = async () => {
-    const totalAmount = calculateTotalFee();
-    const paidAmount = parseFloat(paymentAmount);
-    
-    if (!paidAmount || paidAmount <= 0) {
-      toast.error('Please enter a valid payment amount');
-      return;
-    }
-    
-    if (paidAmount < totalAmount) {
-      toast.error(`Insufficient payment. Total is $${totalAmount.toFixed(2)}`);
-      return;
-    }
-    
-    setProcessingPayment(true);
-    setFormData(prev => ({
-      ...prev,
-      paymentStatus: 'paid',
-      paidAmount: totalAmount,
-      paymentMethod: paymentMethod,
-      paymentDate: new Date().toISOString()
-    }));
-    
-    setShowPaymentModal(false);
-    await handleSubmit(true);
-    setProcessingPayment(false);
-  };
+  const totalAmount = calculateTotalFee();
+  const paidAmount = parseFloat(paymentAmount);
+  
+  // Allow 0 as valid payment amount for free consultations
+  if (isNaN(paidAmount)) {
+    toast.error('Please enter a valid payment amount');
+    return;
+  }
+  
+  // Check if amount is negative
+  if (paidAmount < 0) {
+    toast.error('Amount cannot be negative');
+    return;
+  }
+  
+  // Check if payment is sufficient (allow equal amount)
+  if (paidAmount < totalAmount) {
+    toast.error(`Insufficient payment. Total is $${totalAmount.toFixed(2)}`);
+    return;
+  }
+  
+  setProcessingPayment(true);
+  setFormData(prev => ({
+    ...prev,
+    paymentStatus: 'paid',
+    paidAmount: totalAmount,
+    paymentMethod: paymentMethod,
+    paymentDate: new Date().toISOString()
+  }));
+  
+  setShowPaymentModal(false);
+  await handleSubmit(true);
+  setProcessingPayment(false);
+};
 
   const handleSubmit = async (isPaid = false) => {
     if (!validateForm()) return;
@@ -379,7 +382,7 @@ const RegisterPatient = () => {
         assignedDoctor: formData.assignedDoctor,
         assignedLabTech: formData.assignedLabTech,
         urgency: formData.urgency,
-        paymentStatus: isPaid ? 'paid' : formData.paymentStatus,
+        paymentStatus: isPaid ? (totalFee > 0 ? 'paid' : 'exempt') : formData.paymentStatus,
         paidAmount: isPaid ? totalFee : formData.paidAmount,
         paymentMethod: isPaid ? paymentMethod : formData.paymentMethod,
         paymentDate: isPaid ? new Date().toISOString() : null,
@@ -436,8 +439,10 @@ const RegisterPatient = () => {
         setRegisteredPatient(patientData);
         setShowConfirmation(true);
         
-        if (isPaid) {
+        if (isPaid && totalFee > 0) {
           toast.success(`Payment of $${totalFee.toFixed(2)} collected! Patient registered.`);
+        } else if (totalFee === 0) {
+          toast.success('Patient registered successfully with free consultation!');
         } else {
           toast.success('Patient registered successfully!');
         }
@@ -683,7 +688,10 @@ const RegisterPatient = () => {
               
               <div class="amount-section">
                 <table class="amount-table">
-                  <tr><td>SUBTOTAL:</td><td>$${subtotal.toFixed(2)}</td></tr>
+                  <tr>
+                    <td>SUBTOTAL:</td>
+                    <td>$${subtotal.toFixed(2)}</td>
+                  </tr>
                   ${discountAmount > 0 ? `
                   <tr class="discount-row"><td>DISCOUNT ${registeredPatient.discountType === 'percentage' ? `(${registeredPatient.discountValue}%)` : ''}:</td><td> -$${discountAmount.toFixed(2)}</td></tr>
                   ${discountReason ? `<tr><td style="font-size: 10px; color: #e67e22;" colspan="2">Reason: ${discountReason}</td></tr>` : ''}
@@ -1019,40 +1027,41 @@ const RegisterPatient = () => {
                     </div>
                   </div>
 
-                  {/* Discount Section - Only for Lab Tests */}
-                  {selectedDepartment === 'lab-tech' && formData.selectedLabTests.length > 0 && (
-                    <div className="border-t pt-6">
-                      <div className="flex items-center space-x-2 mb-4"><Percent className="w-5 h-5 text-[#D01A2B]" /><h3 className="text-lg font-bold text-gray-900">Step 7: Apply Discount (Optional)</h3></div>
-                      <div className="bg-orange-50 rounded-xl p-4">
-                        <div className="grid md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-gray-700 font-semibold mb-2">Discount Type</label>
-                            <div className="flex space-x-3">
-                              <button type="button" onClick={() => { setDiscountType('percentage'); setDiscountValue(0); }} className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${discountType === 'percentage' ? 'bg-orange-600 text-white' : 'bg-white border border-gray-300 text-gray-700'}`}>Percentage (%)</button>
-                              <button type="button" onClick={() => { setDiscountType('fixed'); setDiscountValue(0); }} className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${discountType === 'fixed' ? 'bg-orange-600 text-white' : 'bg-white border border-gray-300 text-gray-700'}`}>Fixed Amount ($)</button>
-                            </div>
+                  {/* Discount Section - For BOTH Doctor and Lab Tests */}
+                  <div className="border-t pt-6">
+                    <div className="flex items-center space-x-2 mb-4"><Percent className="w-5 h-5 text-[#D01A2B]" /><h3 className="text-lg font-bold text-gray-900">Step 7: Apply Discount (Optional)</h3></div>
+                    <div className="bg-orange-50 rounded-xl p-4">
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-gray-700 font-semibold mb-2">Discount Type</label>
+                          <div className="flex space-x-3">
+                            <button type="button" onClick={() => { setDiscountType('percentage'); setDiscountValue(0); }} className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${discountType === 'percentage' ? 'bg-orange-600 text-white' : 'bg-white border border-gray-300 text-gray-700'}`}>Percentage (%)</button>
+                            <button type="button" onClick={() => { setDiscountType('fixed'); setDiscountValue(0); }} className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${discountType === 'fixed' ? 'bg-orange-600 text-white' : 'bg-white border border-gray-300 text-gray-700'}`}>Fixed Amount ($)</button>
                           </div>
-                          <div>
-                            <label className="block text-gray-700 font-semibold mb-2">Discount Value</label>
-                            <div className="relative">
-                              {discountType === 'percentage' ? <Percent className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /> : <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />}
-                              <input type="number" step={discountType === 'percentage' ? 1 : 0.01} value={discountValue} onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)} min="0" max={discountType === 'percentage' ? 100 : subtotal} className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]" placeholder={discountType === 'percentage' ? 'e.g., 10' : 'e.g., 5.00'} />
-                            </div>
-                            {discountValue > 0 && discountType === 'percentage' && discountValue > 100 && (
-                              <p className="text-red-500 text-xs mt-1">Percentage cannot exceed 100%</p>
-                            )}
-                            {discountValue > 0 && discountType === 'fixed' && discountValue > subtotal && (
-                              <p className="text-red-500 text-xs mt-1">Discount cannot exceed subtotal (${subtotal.toFixed(2)})</p>
-                            )}
+                        </div>
+                        <div>
+                          <label className="block text-gray-700 font-semibold mb-2">Discount Value</label>
+                          <div className="relative">
+                            {discountType === 'percentage' ? <Percent className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /> : <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />}
+                            <input type="number" step={discountType === 'percentage' ? 1 : 0.01} value={discountValue} onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)} min="0" max={discountType === 'percentage' ? 100 : subtotal} className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]" placeholder={discountType === 'percentage' ? 'e.g., 10' : 'e.g., 5.00'} />
                           </div>
-                          <div className="md:col-span-2">
-                            <label className="block text-gray-700 font-semibold mb-2">Discount Reason (Optional)</label>
-                            <input type="text" value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} placeholder="e.g., Promotional offer, Bulk discount, Loyalty customer, etc." className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]" />
-                          </div>
+                          {discountValue > 0 && discountType === 'percentage' && discountValue > 100 && (
+                            <p className="text-red-500 text-xs mt-1">Percentage cannot exceed 100%</p>
+                          )}
+                          {discountValue > 0 && discountType === 'fixed' && discountValue > subtotal && (
+                            <p className="text-red-500 text-xs mt-1">Discount cannot exceed subtotal (${subtotal.toFixed(2)})</p>
+                          )}
+                          {discountType === 'percentage' && discountValue === 100 && (
+                            <p className="text-green-600 text-xs mt-1">100% discount - Total will be $0.00</p>
+                          )}
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-gray-700 font-semibold mb-2">Discount Reason (Optional)</label>
+                          <input type="text" value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} placeholder="e.g., Promotional offer, Staff discount, Loyalty customer, etc." className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D01A2B]" />
                         </div>
                       </div>
                     </div>
-                  )}
+                  </div>
 
                   <div className="border-t pt-6">
                     <div className="flex items-center justify-between mb-4">
@@ -1081,7 +1090,9 @@ const RegisterPatient = () => {
                       <div className="border-t pt-2 mt-2">
                         <div className="flex justify-between">
                           <span className="text-lg font-bold text-gray-900">Total:</span>
-                          <span className="text-xl font-bold text-[#D01A2B]">${totalFee.toFixed(2)}</span>
+                          <span className={`text-xl font-bold ${totalFee === 0 ? 'text-green-600' : 'text-[#D01A2B]'}`}>
+                            {totalFee === 0 ? 'FREE' : `$${totalFee.toFixed(2)}`}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -1089,8 +1100,8 @@ const RegisterPatient = () => {
 
                   <div className="bg-yellow-50 rounded-xl p-4 flex items-start space-x-3"><AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" /><div className="text-sm text-yellow-800"><p className="font-semibold mb-1">Important Notice:</p><p>The patient will be immediately registered and sent to the selected department.</p></div></div>
 
-                  <button type="submit" disabled={loading || totalFee === 0} className="w-full py-4 bg-[#D01A2B] text-white rounded-xl font-bold text-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2">
-                    {loading ? <><Loader className="w-5 h-5 animate-spin" /><span>Registering Patient...</span></> : <><CreditCard className="w-5 h-5" /><span>Register Patient & Pay ${totalFee.toFixed(2)}</span></>}
+                  <button type="submit" disabled={loading} className="w-full py-4 bg-[#D01A2B] text-white rounded-xl font-bold text-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2">
+                    {loading ? <><Loader className="w-5 h-5 animate-spin" /><span>Registering Patient...</span></> : <><CreditCard className="w-5 h-5" /><span>Register Patient {totalFee > 0 ? `& Pay $${totalFee.toFixed(2)}` : '(Free Consultation)'}</span></>}
                   </button>
                 </>
               )}
@@ -1124,9 +1135,37 @@ const RegisterPatient = () => {
               <div className="flex justify-between"><span className="text-gray-600 font-bold">Total Amount:</span><span className="font-bold text-xl text-[#D01A2B]">${totalFee.toFixed(2)}</span></div>
             </div>
             
-            <div className="mb-4"><label className="block text-gray-700 font-semibold mb-2">Amount Received *</label><input type="number" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder="Enter amount received" className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B]" autoFocus />{paymentAmount && parseFloat(paymentAmount) > totalFee && <p className="text-sm text-green-600 mt-1">Change: ${(parseFloat(paymentAmount) - totalFee).toFixed(2)}</p>}{paymentAmount && parseFloat(paymentAmount) < totalFee && <p className="text-sm text-red-600 mt-1">Insufficient: ${(totalFee - parseFloat(paymentAmount)).toFixed(2)} remaining</p>}</div>
+            <div className="mb-4">
+  <label className="block text-gray-700 font-semibold mb-2">Amount Received *</label>
+  <input 
+    type="number" 
+    step="0.01" 
+    value={paymentAmount} 
+    onChange={(e) => setPaymentAmount(e.target.value)} 
+    placeholder="Enter amount received" 
+    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#D01A2B]" 
+    autoFocus 
+    min="0"
+  />
+  {paymentAmount && parseFloat(paymentAmount) > totalFee && (
+    <p className="text-sm text-green-600 mt-1">Change: ${(parseFloat(paymentAmount) - totalFee).toFixed(2)}</p>
+  )}
+  {paymentAmount && parseFloat(paymentAmount) < totalFee && parseFloat(paymentAmount) !== 0 && (
+    <p className="text-sm text-red-600 mt-1">Insufficient: ${(totalFee - parseFloat(paymentAmount)).toFixed(2)} remaining</p>
+  )}
+  {totalFee === 0 && (
+    <p className="text-sm text-green-600 mt-1">Free consultation - Amount can be $0</p>
+  )}
+</div>
             <div className="mb-4"><label className="block text-gray-700 font-semibold mb-2">Payment Method</label><div className="grid grid-cols-2 gap-3"><button type="button" onClick={() => setPaymentMethod('cash')} className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${paymentMethod === 'cash' ? 'border-[#D01A2B] bg-red-50' : 'border-gray-300'}`}><DollarSign className="w-4 h-4" /><span>Cash</span></button><button type="button" onClick={() => setPaymentMethod('card')} className={`p-3 border rounded-lg flex items-center justify-center space-x-2 ${paymentMethod === 'card' ? 'border-[#D01A2B] bg-red-50' : 'border-gray-300'}`}><CreditCard className="w-4 h-4" /><span>Card</span></button></div></div>
-            <div className="flex space-x-3"><button onClick={() => setShowPaymentModal(false)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50">Cancel</button><button onClick={confirmPayment} disabled={processingPayment} className="flex-1 px-4 py-2 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 disabled:opacity-50 flex items-center justify-center space-x-2">{processingPayment ? <Loader className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}<span>Pay Now</span></button></div>
+            <div className="flex space-x-3"><button onClick={() => setShowPaymentModal(false)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50">Cancel</button><button 
+  onClick={confirmPayment} 
+  disabled={processingPayment || (paymentAmount !== '' && parseFloat(paymentAmount) < totalFee)} 
+  className="flex-1 px-4 py-2 bg-[#D01A2B] text-white rounded-lg font-semibold hover:bg-red-700 disabled:opacity-50 flex items-center justify-center space-x-2"
+>
+  {processingPayment ? <Loader className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+  <span>Pay Now</span>
+</button></div>
           </div>
         </div>
       )}

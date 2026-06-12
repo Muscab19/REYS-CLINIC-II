@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 const LabRequestSchema = new mongoose.Schema({
   requestId: {
     type: String,
-    unique: true
+    unique: true,
+    sparse: true
   },
   
   // Patient Information
@@ -131,7 +132,7 @@ const LabRequestSchema = new mongoose.Schema({
   paymentMethod: {
     type: String,
     enum: ['cash', 'card', 'mobile', 'bank', ''],
-    default: 'cash'
+    default: ''
   },
   paymentDate: {
     type: Date
@@ -190,36 +191,68 @@ LabRequestSchema.index({ status: 1 });
 LabRequestSchema.index({ requestSource: 1 });
 LabRequestSchema.index({ paymentStatus: 1 });
 LabRequestSchema.index({ requestDate: 1 });
+LabRequestSchema.index({ requestedById: 1 });
+
+// Function to get next sequential number
+async function getNextSequenceNumber(prefix) {
+  const LabRequest = mongoose.model('LabRequest');
+  const regex = new RegExp(`^${prefix}-\\d+$`);
+  const lastRequest = await LabRequest.findOne({ 
+    requestId: { $regex: regex } 
+  }).sort({ requestId: -1 });
+  
+  if (lastRequest && lastRequest.requestId) {
+    const match = lastRequest.requestId.match(new RegExp(`${prefix}-(\\d+)`));
+    if (match && match[1]) {
+      return parseInt(match[1]) + 1;
+    }
+  }
+  return 1;
+}
 
 // Pre-save middleware to generate unique requestId
 LabRequestSchema.pre('save', async function(next) {
   if (!this.requestId) {
     try {
-      // Get the last request to determine the next ID
-      const lastRequest = await mongoose.model('LabRequest').findOne().sort({ createdAt: -1 });
-      
-      let nextNumber = 1;
-      if (lastRequest && lastRequest.requestId) {
-        const match = lastRequest.requestId.match(/LAB-(\d+)/);
-        if (match && match[1]) {
-          const lastNumber = parseInt(match[1]);
-          if (!isNaN(lastNumber)) {
-            nextNumber = lastNumber + 1;
-          }
-        }
+      // Determine prefix based on request source
+      let prefix = 'LAB';
+      switch (this.requestSource) {
+        case 'reception':
+          prefix = 'RXC';
+          break;
+        case 'doctor':
+          prefix = 'DOC';
+          break;
+        case 'walkin':
+          prefix = 'WLK';
+          break;
+        case 'consultation':
+          prefix = 'CON';
+          break;
+        default:
+          prefix = 'LAB';
       }
       
-      // Add prefix based on request source
-      const prefix = this.requestSource === 'reception' ? 'RXC' : 
-                     this.requestSource === 'doctor' ? 'DOC' : 
-                     this.requestSource === 'walkin' ? 'WLK' : 'LAB';
-      
+      const nextNumber = await getNextSequenceNumber(prefix);
       this.requestId = `${prefix}-${nextNumber.toString().padStart(6, '0')}`;
+      
+      // Final safety check for uniqueness
+      const LabRequest = mongoose.model('LabRequest');
+      let existing = await LabRequest.findOne({ requestId: this.requestId });
+      let attempts = 0;
+      let currentNumber = nextNumber;
+      
+      while (existing && attempts < 5) {
+        currentNumber++;
+        this.requestId = `${prefix}-${currentNumber.toString().padStart(6, '0')}`;
+        existing = await LabRequest.findOne({ requestId: this.requestId });
+        attempts++;
+      }
+      
+      console.log(`[LabRequest] Generated ID: ${this.requestId} for source: ${this.requestSource}`);
     } catch (error) {
       console.error('Error generating requestId:', error);
-      // Fallback to timestamp-based ID
-      const prefix = this.requestSource === 'reception' ? 'RXC' : 'LAB';
-      this.requestId = `${prefix}-${Date.now()}`;
+      this.requestId = `${this.requestSource.toUpperCase()}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     }
   }
   next();

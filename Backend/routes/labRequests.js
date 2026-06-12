@@ -2,11 +2,13 @@ const express = require('express');
 const router = express.Router();
 const LabRequest = require('../models/LabRequest');
 const Patient = require('../models/Patient');
+const LabTest = require('../models/LabTest');
+const LabTestCategory = require('../models/LabTestCategory');
 const { protect, authorize } = require('../middleware/auth');
 
 // @route   GET /api/lab-requests
 // @desc    Get all lab requests (with filters)
-// @access  Private (Doctor, Lab Tech, Admin)
+// @access  Private
 router.get('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadmin'), async (req, res) => {
   try {
     let query = {};
@@ -14,7 +16,7 @@ router.get('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadmi
     // Filter by status
     if (req.query.status) {
       query.status = req.query.status;
-    } 
+    }
     
     // Filter by priority
     if (req.query.priority) {
@@ -26,9 +28,9 @@ router.get('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadmi
       query.patientId = req.query.patientId;
     }
     
-    // Filter by doctor (requested by)
-    if (req.query.requestedById) {
-      query.requestedById = req.query.requestedById;
+    // Filter by payment status
+    if (req.query.paymentStatus) {
+      query.paymentStatus = req.query.paymentStatus;
     }
     
     // For doctors: only show their own requests
@@ -36,18 +38,18 @@ router.get('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadmi
       query.requestedById = req.user.id;
     }
     
-    // For lab tech: show all except cancelled
+    // For lab tech: show all pending and in-progress
     if (req.user.role === 'lab-tech') {
-      query.status = { $ne: 'cancelled' };
-    }
-    
-    // For receptionist: show only active requests
-    if (req.user.role === 'receptionist') {
       query.status = { $in: ['pending', 'in-progress'] };
     }
     
+    // For reception: show all
+    if (req.user.role === 'reception') {
+      // Show all requests
+    }
+    
     const labRequests = await LabRequest.find(query)
-      .populate('patientId', 'childName childAge parentName parentPhone')
+      .populate('patientId', 'childName childAge parentName parentPhone patientId')
       .populate('requestedById', 'name email')
       .populate('performedById', 'name email')
       .sort({ priority: -1, requestDate: -1 });
@@ -73,7 +75,7 @@ router.get('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadmi
 router.get('/:id', protect, async (req, res) => {
   try {
     const labRequest = await LabRequest.findById(req.params.id)
-      .populate('patientId', 'childName childAge parentName parentPhone')
+      .populate('patientId', 'childName childAge parentName parentPhone patientId')
       .populate('requestedById', 'name email')
       .populate('performedById', 'name email');
     
@@ -125,21 +127,24 @@ router.post('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadm
       notes,
       priority,
       requestedBy,
-      requestedById
+      requestedById,
+      requestSource,
+      paymentStatus,
+      testPrice,
+      consultationId
     } = req.body;
 
-    console.log('Creating lab request:', { testName, patientName, requestedBy });
+    console.log('Creating lab request:', { testName, patientName, requestedBy, requestSource });
 
     // Validate required fields
-    if (!patientId || !patientName || !testName || !requestedBy) {
+    if (!patientId || !patientName || !testName) {
       return res.status(400).json({
         success: false,
-        msg: 'Please provide patientId, patientName, testName, and requestedBy'
+        msg: 'Please provide patientId, patientName, and testName'
       });
     }
 
     // Check if patient exists
-    const Patient = require('../models/Patient');
     const patient = await Patient.findById(patientId);
     if (!patient) {
       return res.status(404).json({
@@ -148,35 +153,74 @@ router.post('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadm
       });
     }
 
-    // Generate unique request ID
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 10000);
-    const requestId = `LAB-${timestamp}-${random}`;
+    // Get test price from LabTest if not provided
+    let finalTestPrice = testPrice || 0;
+    let testCategoryId = null;
+    let testCategoryName = '';
     
+    if (testCategory) {
+      // Check if testCategory is an ObjectId or a string
+      if (testCategory.match(/^[0-9a-fA-F]{24}$/)) {
+        testCategoryId = testCategory;
+        const category = await LabTestCategory.findById(testCategory);
+        if (category) {
+          testCategoryName = category.name;
+        }
+      } else {
+        testCategoryName = testCategory;
+        // Try to find category by name
+        const category = await LabTestCategory.findOne({ name: { $regex: new RegExp(`^${testCategory}$`, 'i') } });
+        if (category) {
+          testCategoryId = category._id;
+        }
+      }
+    }
+    
+    // Try to get test details from LabTest collection
+    const testDetails = await LabTest.findOne({ 
+      name: { $regex: new RegExp(`^${testName}$`, 'i') } 
+    });
+    
+    if (testDetails && finalTestPrice === 0) {
+      finalTestPrice = testDetails.price || 0;
+    }
+    
+    if (testDetails && !testCategoryId && testDetails.category) {
+      testCategoryId = testDetails.category;
+      const category = await LabTestCategory.findById(testDetails.category);
+      if (category) {
+        testCategoryName = category.name;
+      }
+    }
+
     // Create lab request
     const labRequest = new LabRequest({
-      requestId,
       patientId,
       patientName: patientName || patient.childName,
       patientAge: patientAge || patient.childAge,
       parentName: parentName || patient.parentName,
       parentPhone: parentPhone || patient.parentPhone,
       testName,
-      testCategory: testCategory || 'other',
-      parameters: parameters || [],
-      normalRanges: normalRanges || new Map(),
+      testCategory: testCategoryId,
+      testCategoryName: testCategoryName,
+      parameters: parameters || (testDetails?.parameters?.map(p => p.name) || [testName]),
+      normalRanges: normalRanges || {},
       clinicalInfo: clinicalInfo || '',
       notes: notes || '',
       priority: priority || 'normal',
-      requestedBy: requestedBy,
+      requestedBy: requestedBy || req.user.name,
       requestedById: requestedById || req.user.id,
+      requestSource: requestSource || 'reception',
       status: 'pending',
+      paymentStatus: paymentStatus || 'pending',
+      testPrice: finalTestPrice,
+      consultationId: consultationId || '',
       requestDate: new Date()
     });
     
     await labRequest.save();
     
-    console.log(`Lab request created: ${requestId} for ${testName}`);
+    console.log(`Lab request created: ${labRequest.requestId} for ${testName}`);
     
     res.status(201).json({
       success: true,
@@ -200,7 +244,7 @@ router.put('/:id/status', protect, async (req, res) => {
   try {
     const { status } = req.body;
     
-    if (!status || !['pending', 'in-progress', 'completed', 'cancelled'].includes(status)) {
+    if (!status || !['pending', 'in-progress', 'completed', 'cancelled', 'awaiting-payment'].includes(status)) {
       return res.status(400).json({
         success: false,
         msg: 'Please provide a valid status'
@@ -227,7 +271,7 @@ router.put('/:id/status', protect, async (req, res) => {
     labRequest.status = status;
     
     if (status === 'completed') {
-      labRequest.completedAt = Date.now();
+      labRequest.completedAt = new Date();
     }
     
     await labRequest.save();
@@ -270,45 +314,13 @@ router.put('/:id/results', protect, authorize('lab-tech'), async (req, res) => {
       });
     }
     
-    // Fetch test definition to get parameter names
-    const LabTest = require('../models/LabTest');
-    const testDefinition = await LabTest.findOne({ 
-      name: { $regex: new RegExp(`^${labRequest.testName}$`, 'i') }
-    });
-    
-    // Build expected parameter names based on test type
-    let expectedParams = [];
-    
-    if (testDefinition && testDefinition.resultType === 'multi' && testDefinition.parameters) {
-      // For multi-parameter tests, use parameter names from definition
-      expectedParams = testDefinition.parameters.map(p => p.name);
-    } else if (labRequest.parameters && labRequest.parameters.length > 0) {
-      // Fallback to stored parameters
-      expectedParams = labRequest.parameters;
-    }
-    
-    // Validate all expected parameters have results
-    if (expectedParams.length > 0) {
-      const missingParams = expectedParams.filter(param => {
-        // Check if result exists for this parameter
-        return !results[param] && results[param] !== 0 && results[param] !== false;
-      });
-      
-      if (missingParams.length > 0) {
-        return res.status(400).json({
-          success: false,
-          msg: `Missing results for parameters: ${missingParams.join(', ')}`
-        });
-      }
-    }
-    
-    // Store results as-is (they already use proper parameter names)
+    // Store results
     labRequest.results = results;
     labRequest.additionalComments = additionalComments || '';
     labRequest.performedBy = performedBy || req.user.name;
     labRequest.performedById = req.user.id;
     labRequest.status = 'completed';
-    labRequest.completedAt = completedAt || Date.now();
+    labRequest.completedAt = completedAt || new Date();
     
     await labRequest.save();
     
@@ -327,10 +339,48 @@ router.put('/:id/results', protect, authorize('lab-tech'), async (req, res) => {
   }
 });
 
+// @route   PUT /api/lab-requests/:id/payment
+// @desc    Update payment status for lab request
+// @access  Private (Reception, Admin)
+router.put('/:id/payment', protect, authorize('reception', 'superadmin'), async (req, res) => {
+  try {
+    const { paymentStatus, paidAmount, paymentMethod, paymentDate } = req.body;
+    
+    const labRequest = await LabRequest.findById(req.params.id);
+    
+    if (!labRequest) {
+      return res.status(404).json({
+        success: false,
+        msg: 'Lab request not found'
+      });
+    }
+    
+    labRequest.paymentStatus = paymentStatus || 'paid';
+    labRequest.paidAmount = paidAmount || labRequest.testPrice;
+    labRequest.paymentMethod = paymentMethod || 'cash';
+    labRequest.paymentDate = paymentDate || new Date();
+    
+    await labRequest.save();
+    
+    res.json({
+      success: true,
+      msg: 'Payment status updated successfully',
+      data: labRequest
+    });
+  } catch (error) {
+    console.error('Error updating payment:', error);
+    res.status(500).json({
+      success: false,
+      msg: 'Server error while updating payment',
+      error: error.message
+    });
+  }
+});
+
 // @route   DELETE /api/lab-requests/:id
 // @desc    Delete a lab request (admin only)
-// @access  Private (Admin only)
-router.delete('/:id', protect, authorize('admin'), async (req, res) => {
+// @access  Private (Superadmin only)
+router.delete('/:id', protect, authorize('superadmin'), async (req, res) => {
   try {
     const labRequest = await LabRequest.findById(req.params.id);
     
@@ -341,7 +391,7 @@ router.delete('/:id', protect, authorize('admin'), async (req, res) => {
       });
     }
     
-    await labRequest.remove();
+    await labRequest.deleteOne();
     
     res.json({
       success: true,
@@ -376,13 +426,6 @@ router.get('/stats/summary', protect, async (req, res) => {
     const cancelled = await LabRequest.countDocuments({ ...query, status: 'cancelled' });
     const urgent = await LabRequest.countDocuments({ ...query, priority: 'urgent', status: { $ne: 'completed' } });
     
-    // Get recent requests
-    const recentRequests = await LabRequest.find(query)
-      .sort({ requestDate: -1 })
-      .limit(10)
-      .populate('patientId', 'childName')
-      .populate('requestedById', 'name');
-    
     res.json({
       success: true,
       data: {
@@ -391,8 +434,7 @@ router.get('/stats/summary', protect, async (req, res) => {
         inProgress,
         completed,
         cancelled,
-        urgent,
-        recentRequests
+        urgent
       }
     });
   } catch (error) {
@@ -406,12 +448,12 @@ router.get('/stats/summary', protect, async (req, res) => {
 });
 
 // @route   GET /api/lab-requests/:id/with-test-details
-// @desc    Get lab request with full test details including parameters and result types
+// @desc    Get lab request with full test details
 // @access  Private (Lab Tech)
 router.get('/:id/with-test-details', protect, authorize('lab-tech'), async (req, res) => {
   try {
     const labRequest = await LabRequest.findById(req.params.id)
-      .populate('patientId', 'childName childAge parentName parentPhone')
+      .populate('patientId', 'childName childAge parentName parentPhone patientId')
       .populate('requestedById', 'name email');
     
     if (!labRequest) {
@@ -422,10 +464,9 @@ router.get('/:id/with-test-details', protect, authorize('lab-tech'), async (req,
     }
     
     // Fetch the test definition from LabTest collection
-    const LabTest = require('../models/LabTest');
     const testDefinition = await LabTest.findOne({ 
       name: { $regex: new RegExp(`^${labRequest.testName}$`, 'i') }
-    });
+    }).populate('category', 'name color');
     
     const responseData = {
       ...labRequest.toObject(),
@@ -447,5 +488,3 @@ router.get('/:id/with-test-details', protect, authorize('lab-tech'), async (req,
 });
 
 module.exports = router;
-
-// router.put('/:id/results', protect, authorize('lab-tech'), async (req, res) => {
