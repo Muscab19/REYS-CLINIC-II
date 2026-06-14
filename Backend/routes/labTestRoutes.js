@@ -4,9 +4,6 @@ const LabTest = require('../models/LabTest');
 const LabTestCategory = require('../models/LabTestCategory');
 const { protect, authorize } = require('../middleware/auth');
 
-// @route   GET /api/lab-tests
-// @desc    Get all lab tests
-// @access  Private
 router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'reception'), async (req, res) => {
   try {
     const { search, category, isActive } = req.query;
@@ -48,15 +45,13 @@ router.get('/', protect, authorize('lab-tech', 'doctor', 'superadmin', 'receptio
   }
 });
 
-// @route   POST /api/lab-tests
-// @desc    Create a single lab test
-// @access  Private (lab-tech)
 router.post('/', protect, authorize('lab-tech'), async (req, res) => {
   try {
     const { 
       name, 
       category,
       resultType,
+      showReferenceOnPrint,
       normalRangeMin,
       normalRangeMax,
       unit, 
@@ -70,7 +65,6 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
     
     console.log('Received test data:', req.body);
     
-    // Validate required fields
     if (!name || !category || !price) {
       return res.status(400).json({ 
         success: false, 
@@ -78,13 +72,11 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       });
     }
     
-    // Get category to verify it exists and get name
     const categoryObj = await LabTestCategory.findById(category);
     if (!categoryObj) {
       return res.status(400).json({ success: false, msg: 'Invalid category' });
     }
     
-    // For multi-parameter tests, validate parameters
     if (resultType === 'multi') {
       if (!parameters || parameters.length === 0) {
         return res.status(400).json({ 
@@ -130,7 +122,6 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       }
     }
     
-    // Check if test with same name exists
     const existing = await LabTest.findOne({ 
       name: { $regex: new RegExp(`^${name.trim()}$`, 'i') } 
     });
@@ -142,18 +133,17 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       });
     }
     
-    // Generate a unique code
     const prefix = categoryObj.name.substring(0, 3).toUpperCase();
     const count = await LabTest.countDocuments({ category });
     const uniqueCode = `${prefix}${String(count + 1).padStart(3, '0')}`;
     
-    // Build the test data
     const testData = {
       name: name.trim(),
       code: uniqueCode.toUpperCase(),
       category: category,
       categoryName: categoryObj.name,
       resultType: resultType || 'quantitative',
+      showReferenceOnPrint: showReferenceOnPrint !== undefined ? showReferenceOnPrint : true,
       price: parseFloat(price),
       unit: unit || '',
       turnaroundTime: turnaroundTime || '24 hours',
@@ -162,7 +152,6 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       isActive: true
     };
     
-    // Add type-specific fields
     if (resultType === 'quantitative') {
       testData.normalRangeMin = normalRangeMin ? parseFloat(normalRangeMin) : null;
       testData.normalRangeMax = normalRangeMax ? parseFloat(normalRangeMax) : null;
@@ -184,6 +173,7 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
       testData.parameters = parameters.map(param => ({
         name: param.name,
         resultType: param.resultType,
+        showReferenceOnPrint: param.showReferenceOnPrint !== undefined ? param.showReferenceOnPrint : true,
         normalRangeMin: param.normalRangeMin ? parseFloat(param.normalRangeMin) : null,
         normalRangeMax: param.normalRangeMax ? parseFloat(param.normalRangeMax) : null,
         unit: param.unit || '',
@@ -196,8 +186,6 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
     
     const test = new LabTest(testData);
     await test.save();
-    
-    // Populate category for response
     await test.populate('category', 'name color');
     
     res.status(201).json({
@@ -219,15 +207,13 @@ router.post('/', protect, authorize('lab-tech'), async (req, res) => {
   }
 });
 
-// @route   PUT /api/lab-tests/:id
-// @desc    Update a lab test
-// @access  Private (lab-tech)
 router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
   try {
     const { 
       name, 
       category, 
       resultType,
+      showReferenceOnPrint,
       normalRangeMin,
       normalRangeMax,
       unit, 
@@ -247,7 +233,6 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
       return res.status(404).json({ success: false, msg: 'Test not found' });
     }
     
-    // Check for duplicate name (excluding current)
     if (name && name !== test.name) {
       const existing = await LabTest.findOne({ 
         name: { $regex: new RegExp(`^${name.trim()}$`, 'i') },
@@ -259,7 +244,6 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
       test.name = name.trim();
     }
     
-    // If category is changing, get new category name
     let categoryName = test.categoryName;
     if (category && category !== test.category.toString()) {
       const categoryObj = await LabTestCategory.findById(category);
@@ -272,12 +256,12 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
     }
     
     if (resultType) test.resultType = resultType;
+    if (showReferenceOnPrint !== undefined) test.showReferenceOnPrint = showReferenceOnPrint;
     if (price) test.price = parseFloat(price);
     if (unit !== undefined) test.unit = unit;
     if (turnaroundTime !== undefined) test.turnaroundTime = turnaroundTime;
     if (isActive !== undefined) test.isActive = isActive;
     
-    // Update type-specific fields
     if (resultType === 'quantitative') {
       test.normalRangeMin = normalRangeMin ? parseFloat(normalRangeMin) : null;
       test.normalRangeMax = normalRangeMax ? parseFloat(normalRangeMax) : null;
@@ -299,6 +283,7 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
       test.parameters = parameters.map(param => ({
         name: param.name,
         resultType: param.resultType,
+        showReferenceOnPrint: param.showReferenceOnPrint !== undefined ? param.showReferenceOnPrint : true,
         normalRangeMin: param.normalRangeMin ? parseFloat(param.normalRangeMin) : null,
         normalRangeMax: param.normalRangeMax ? parseFloat(param.normalRangeMax) : null,
         unit: param.unit || '',
@@ -310,8 +295,6 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
     }
     
     await test.save();
-    
-    // Populate category for response
     await test.populate('category', 'name color');
     
     res.json({
@@ -325,9 +308,6 @@ router.put('/:id', protect, authorize('lab-tech'), async (req, res) => {
   }
 });
 
-// @route   DELETE /api/lab-tests/:id
-// @desc    Delete a lab test
-// @access  Private (lab-tech)
 router.delete('/:id', protect, authorize('lab-tech'), async (req, res) => {
   try {
     const test = await LabTest.findById(req.params.id);
@@ -347,9 +327,6 @@ router.delete('/:id', protect, authorize('lab-tech'), async (req, res) => {
   }
 });
 
-// @route   GET /api/lab-tests/:id
-// @desc    Get single lab test
-// @access  Private
 router.get('/:id', protect, authorize('lab-tech', 'doctor', 'superadmin', 'reception'), async (req, res) => {
   try {
     const test = await LabTest.findById(req.params.id).populate('category', 'name color');
@@ -368,9 +345,6 @@ router.get('/:id', protect, authorize('lab-tech', 'doctor', 'superadmin', 'recep
   }
 });
 
-// @route   GET /api/lab-tests/by-name/:name
-// @desc    Get lab test by exact name
-// @access  Private
 router.get('/by-name/:name', protect, authorize('lab-tech', 'doctor', 'superadmin', 'reception'), async (req, res) => {
   try {
     const testName = decodeURIComponent(req.params.name);

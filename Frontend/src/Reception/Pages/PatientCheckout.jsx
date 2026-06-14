@@ -39,7 +39,9 @@ import {
   TestTube,
   Smartphone,
   Building2,
-  FlaskConical
+  FlaskConical,
+  Percent,
+  Tag
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -65,6 +67,12 @@ const PatientCheckout = () => {
   const [mobileNumber, setMobileNumber] = useState('');
   const [bankLast4, setBankLast4] = useState('');
   const [processingPayment, setProcessingPayment] = useState(false);
+  
+  // Discount states
+  const [discountType, setDiscountType] = useState('none');
+  const [discountValue, setDiscountValue] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
+  const [showDiscountInput, setShowDiscountInput] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -139,11 +147,68 @@ const PatientCheckout = () => {
     
     // Set lab tests that need payment
     setLabTests(patient.labTestsRequested || []);
+    
+    // Reset discount when selecting new patient
+    resetDiscount();
   };
 
   // Calculate total lab tests amount
-  const calculateTotal = () => {
+  const calculateSubtotal = () => {
     return labTests.reduce((sum, test) => sum + (test.price || 0), 0);
+  };
+
+  // Calculate discount amount
+  const calculateDiscountAmount = () => {
+    const subtotal = calculateSubtotal();
+    if (discountType === 'none' || !discountValue) return 0;
+    
+    const value = parseFloat(discountValue);
+    if (isNaN(value)) return 0;
+    
+    if (discountType === 'percentage') {
+      return (subtotal * value) / 100;
+    } else if (discountType === 'fixed') {
+      return Math.min(value, subtotal);
+    }
+    return 0;
+  };
+
+  // Calculate final total after discount
+  const calculateTotal = () => {
+    return calculateSubtotal() - calculateDiscountAmount();
+  };
+
+  const resetDiscount = () => {
+    setDiscountType('none');
+    setDiscountValue('');
+    setDiscountReason('');
+    setShowDiscountInput(false);
+  };
+
+  const applyDiscount = () => {
+    if (discountType === 'none') {
+      resetDiscount();
+      return;
+    }
+    
+    const value = parseFloat(discountValue);
+    if (isNaN(value) || value <= 0) {
+      toast.error('Please enter a valid discount amount');
+      return;
+    }
+    
+    if (discountType === 'percentage' && value > 100) {
+      toast.error('Percentage discount cannot exceed 100%');
+      return;
+    }
+    
+    if (discountType === 'fixed' && value > calculateSubtotal()) {
+      toast.error('Fixed discount cannot exceed subtotal');
+      return;
+    }
+    
+    toast.success(`Discount applied: ${discountType === 'percentage' ? `${value}%` : `$${value.toFixed(2)}`}`);
+    setShowDiscountInput(false);
   };
 
   const handleProcessPayment = () => {
@@ -193,6 +258,8 @@ const PatientCheckout = () => {
       }
       
       const allLabTests = selectedPatient.labTestsRequested || [];
+      const subtotal = calculateSubtotal();
+      const discountAmount = calculateDiscountAmount();
       const totalAmount = calculateTotal();
       
       // SAVE TO DATABASE
@@ -211,6 +278,11 @@ const PatientCheckout = () => {
           parentPhone: selectedPatient.parentPhone,
           doctorName: selectedPatient.doctorName,
           labTests: allLabTests,
+          subtotal: subtotal,
+          discountType: discountType,
+          discountValue: discountType !== 'none' ? parseFloat(discountValue) : 0,
+          discountAmount: discountAmount,
+          discountReason: discountReason,
           totalAmount: totalAmount,
           paidAmount: totalAmount,
           paymentMethod: paymentType === 'mobile' ? 'Mobile Money' : (paymentType === 'bank' ? 'Bank Transfer' : 'Cash'),
@@ -243,6 +315,9 @@ const PatientCheckout = () => {
             labPaymentStatus: 'paid',
             labPaidAt: new Date().toISOString(),
             labPaidAmount: totalAmount,
+            labDiscountAmount: discountAmount,
+            labDiscountType: discountType,
+            labDiscountReason: discountReason,
             labPaymentMethod: paymentType === 'mobile' ? 'Mobile Money' : (paymentType === 'bank' ? 'Bank Transfer' : 'Cash'),
             status: 'completed'
           };
@@ -263,6 +338,11 @@ const PatientCheckout = () => {
         phone: selectedPatient.parentPhone,
         ticketId: selectedPatient.ticketId,
         labTests: allLabTests,
+        subtotal: subtotal,
+        discountType: discountType,
+        discountValue: discountType !== 'none' ? parseFloat(discountValue) : 0,
+        discountAmount: discountAmount,
+        discountReason: discountReason,
         total: totalAmount,
         paymentMethod: paymentType === 'mobile' ? 'Mobile Money' : (paymentType === 'bank' ? 'Bank Transfer' : 'Cash'),
         paymentDetails: paymentType === 'mobile' ? { mobileNumber } : (paymentType === 'bank' ? { bankLast4 } : {}),
@@ -279,7 +359,7 @@ const PatientCheckout = () => {
       setShowPaymentModal(false);
       setShowInvoiceModal(true);
       
-      toast.success(`Payment of $${totalAmount} processed successfully!`);
+      toast.success(`Payment of $${totalAmount.toFixed(2)} processed successfully!${discountAmount > 0 ? ` (Saved $${discountAmount.toFixed(2)})` : ''}`);
       
       fetchData();
       
@@ -296,6 +376,8 @@ const PatientCheckout = () => {
     const logoBase64 = logo;
     const currentDate = new Date().toLocaleDateString('en-GB');
     const refNo = `#${Math.floor(Math.random() * 100000)}`;
+    
+    const hasDiscount = currentInvoice.discountAmount > 0;
     
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -457,6 +539,9 @@ const PatientCheckout = () => {
               border-top: 2px solid #333;
               padding-top: 8px;
             }
+            .discount-row td {
+              color: #059669;
+            }
             
             .signature {
               margin-top: 25px;
@@ -556,12 +641,19 @@ const PatientCheckout = () => {
                 <table class="amount-table">
                   <tr>
                     <td>SUBTOTAL:</td>
-                    <td>$${currentInvoice.total.toFixed(2)}</td>
+                    <td>$${currentInvoice.subtotal.toFixed(2)}</td>
                   </tr>
-                  <tr>
-                    <td>DISCOUNT:</td>
-                    <td>$0.00</td>
-                  </tr>
+                  ${currentInvoice.discountAmount > 0 ? `
+                    <tr class="discount-row">
+                      <td>DISCOUNT (${currentInvoice.discountType === 'percentage' ? `${currentInvoice.discountValue}%` : 'Fixed'}):</td>
+                      <td>-$${currentInvoice.discountAmount.toFixed(2)}</td>
+                    </tr>
+                    ${currentInvoice.discountReason ? `
+                      <tr class="discount-row">
+                        <td colspan="2" style="font-size: 10px; color: #666;">Reason: ${currentInvoice.discountReason}</td>
+                      </tr>
+                    ` : ''}
+                  ` : ''}
                   <tr class="total-row">
                     <td>TOTAL PAID:</td>
                     <td>$${currentInvoice.total.toFixed(2)}</td>
@@ -592,8 +684,8 @@ const PatientCheckout = () => {
   const handleDownloadInvoice = () => {
     const invoiceData = currentInvoice;
     const csvContent = "data:text/csv;charset=utf-8," 
-      + "Receipt #,Patient Name,Parent Name,Phone,Total,Payment Method,Date\n"
-      + `${invoiceData.invoiceId},${invoiceData.patientName},${invoiceData.parentName},${invoiceData.phone},$${invoiceData.total.toFixed(2)},${invoiceData.paymentMethod},${new Date(invoiceData.paymentDate).toLocaleDateString()}`;
+      + "Receipt #,Patient Name,Parent Name,Phone,Subtotal,Discount,Total,Payment Method,Date\n"
+      + `${invoiceData.invoiceId},${invoiceData.patientName},${invoiceData.parentName},${invoiceData.phone},$${invoiceData.subtotal.toFixed(2)},$${invoiceData.discountAmount.toFixed(2)},$${invoiceData.total.toFixed(2)},${invoiceData.paymentMethod},${new Date(invoiceData.paymentDate).toLocaleDateString()}`;
     
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -800,9 +892,88 @@ const PatientCheckout = () => {
                       <span className="font-semibold">{labTests.length}</span>
                     </div>
                     <div className="flex justify-between py-2 border-b">
-                      <span className="text-gray-600">Lab Tests Total</span>
-                      <span className="font-semibold">${labTests.reduce((sum, t) => sum + (t.price || 0), 0).toFixed(2)}</span>
+                      <span className="text-gray-600">Subtotal</span>
+                      <span className="font-semibold">${calculateSubtotal().toFixed(2)}</span>
                     </div>
+                    
+                    {/* Discount Section */}
+                    <div className="py-2 border-b">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-gray-600">Discount</span>
+                        {!showDiscountInput ? (
+                          <button 
+                            onClick={() => setShowDiscountInput(true)}
+                            className="text-sm text-purple-600 hover:text-purple-700 flex items-center gap-1"
+                          >
+                            <Tag className="w-3 h-3" />
+                            Add Discount
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={() => resetDiscount()}
+                            className="text-sm text-red-600 hover:text-red-700"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                      
+                      {showDiscountInput && (
+                        <div className="mt-2 space-y-2">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setDiscountType('percentage')}
+                              className={`flex-1 px-3 py-1.5 text-sm rounded-lg border ${discountType === 'percentage' ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-300 hover:bg-gray-50'}`}
+                            >
+                              <Percent className="w-3 h-3 inline mr-1" />
+                              %
+                            </button>
+                            <button
+                              onClick={() => setDiscountType('fixed')}
+                              className={`flex-1 px-3 py-1.5 text-sm rounded-lg border ${discountType === 'fixed' ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-300 hover:bg-gray-50'}`}
+                            >
+                              <DollarSign className="w-3 h-3 inline mr-1" />
+                              Fixed
+                            </button>
+                          </div>
+                          
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              step={discountType === 'percentage' ? "1" : "0.01"}
+                              min="0"
+                              max={discountType === 'percentage' ? "100" : calculateSubtotal()}
+                              value={discountValue}
+                              onChange={(e) => setDiscountValue(e.target.value)}
+                              placeholder={discountType === 'percentage' ? "Enter %" : "Enter amount"}
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-600"
+                            />
+                            <button
+                              onClick={applyDiscount}
+                              className="px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
+                            >
+                              Apply
+                            </button>
+                          </div>
+                          
+                          <input
+                            type="text"
+                            value={discountReason}
+                            onChange={(e) => setDiscountReason(e.target.value)}
+                            placeholder="Reason for discount (optional)"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-600"
+                          />
+                        </div>
+                      )}
+                      
+                      {calculateDiscountAmount() > 0 && (
+                        <div className="mt-2 text-right text-green-600 text-sm font-semibold">
+                          -${calculateDiscountAmount().toFixed(2)} ({discountType === 'percentage' ? `${discountValue}%` : 'Fixed'})
+                          {discountReason && <span className="text-gray-500 text-xs ml-1">- {discountReason}</span>}
+                        </div>
+                      )}
+                    </div>
+                    
                     <div className="flex justify-between py-3">
                       <span className="text-lg font-bold text-gray-900">Total Amount</span>
                       <span className="text-2xl font-bold text-purple-600">${calculateTotal().toFixed(2)}</span>
@@ -835,6 +1006,9 @@ const PatientCheckout = () => {
               <div className="mb-4">
                 <p className="text-gray-600">Total Amount for Lab Tests</p>
                 <p className="text-3xl font-bold text-purple-600">${calculateTotal().toFixed(2)}</p>
+                {calculateDiscountAmount() > 0 && (
+                  <p className="text-sm text-green-600 mt-1">Discount applied: -${calculateDiscountAmount().toFixed(2)}</p>
+                )}
               </div>
               
               <div className="mb-6">
@@ -932,7 +1106,19 @@ const PatientCheckout = () => {
               </table>
               
               <div className="border-t pt-4 text-right">
-                <p className="text-lg font-bold text-purple-600">Total Paid: ${currentInvoice.total.toFixed(2)}</p>
+                <p className="text-sm">Subtotal: ${currentInvoice.subtotal?.toFixed(2) || currentInvoice.total.toFixed(2)}</p>
+                {currentInvoice.discountAmount > 0 && (
+                  <>
+                    <p className="text-sm text-green-600">
+                      Discount ({currentInvoice.discountType === 'percentage' ? `${currentInvoice.discountValue}%` : 'Fixed'}): 
+                      -${currentInvoice.discountAmount.toFixed(2)}
+                    </p>
+                    {currentInvoice.discountReason && (
+                      <p className="text-xs text-gray-500">Reason: {currentInvoice.discountReason}</p>
+                    )}
+                  </>
+                )}
+                <p className="text-lg font-bold text-purple-600 mt-2">Total Paid: ${currentInvoice.total.toFixed(2)}</p>
                 <p><strong>Payment Method:</strong> {currentInvoice.paymentMethod}</p>
                 {currentInvoice.paymentMethod === 'Mobile Money' && <p><strong>Mobile Number:</strong> {currentInvoice.paymentDetails?.mobileNumber}</p>}
                 {currentInvoice.paymentMethod === 'Bank Transfer' && <p><strong>Card Last 4:</strong> **** {currentInvoice.paymentDetails?.bankLast4}</p>}
@@ -953,7 +1139,7 @@ const PatientCheckout = () => {
                 <button onClick={handleDownloadInvoice} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-semibold flex items-center justify-center space-x-2 hover:bg-gray-50">
                   <Download className="w-4 h-4" /><span>Download</span>
                 </button>
-                <button onClick={() => { setShowInvoiceModal(false); setSelectedPatient(null); setLabTests([]); }} className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700">
+                <button onClick={() => { setShowInvoiceModal(false); setSelectedPatient(null); setLabTests([]); resetDiscount(); }} className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700">
                   Done
                 </button>
               </div>
@@ -966,5 +1152,3 @@ const PatientCheckout = () => {
 };
 
 export default PatientCheckout;
-
-// ✅ LABORATORY INSTRUCTION

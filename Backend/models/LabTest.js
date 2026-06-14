@@ -32,6 +32,10 @@ const labTestSchema = new mongoose.Schema({
     enum: ['quantitative', 'qualitative', 'semi-quantitative', 'categorical', 'text', 'multi'],
     default: 'quantitative'
   },
+  showReferenceOnPrint: {
+    type: Boolean,
+    default: true
+  },
   normalRangeMin: {
     type: Number,
     default: null
@@ -60,6 +64,10 @@ const labTestSchema = new mongoose.Schema({
       type: String,
       enum: ['quantitative', 'qualitative', 'semi-quantitative', 'categorical', 'text'],
       required: true
+    },
+    showReferenceOnPrint: {
+      type: Boolean,
+      default: true
     },
     normalRangeMin: Number,
     normalRangeMax: Number,
@@ -104,7 +112,6 @@ const labTestSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Auto-populate category name before save
 labTestSchema.pre('save', async function(next) {
   if (this.category && (this.isNew || this.isModified('category'))) {
     const LabTestCategory = mongoose.model('LabTestCategory');
