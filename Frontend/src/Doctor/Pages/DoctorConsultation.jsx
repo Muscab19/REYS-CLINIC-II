@@ -1170,8 +1170,12 @@ const handleCompleteConsultation = async () => {
     }
     
     // Send lab test requests to lab-tech
+    let labRequestsSent = 0;
     if (selectedLabTests.length > 0) {
-      await sendLabTestRequests();
+      labRequestsSent = await sendLabTestRequests();
+      if (labRequestsSent === 0) {
+        toast.warning('No lab requests were sent. Please check and try again.');
+      }
     }
     
     const consultationRecord = {
@@ -1197,10 +1201,10 @@ const handleCompleteConsultation = async () => {
         category: test.category || 'General',
         requestedBy: `Dr. ${user.name}`,
         requestedAt: new Date().toISOString(),
-        paid: false,  // Important: Mark as not paid yet
+        paid: false,
         status: 'pending'
       })),
-      labPaymentStatus: 'pending',  // Important: Set payment status to pending
+      labPaymentStatus: 'pending',
       medications: selectedMedications,
       notes: consultationData.notes,
       treatment: consultationData.treatment,
@@ -1256,8 +1260,10 @@ const handleCompleteConsultation = async () => {
     
     toast.dismiss(loadingToast);
     
-    if (selectedLabTests.length > 0) {
-      toast.success(`Consultation completed! ${selectedLabTests.length} lab test request(s) sent. Payment required at reception.`);
+    if (selectedLabTests.length > 0 && labRequestsSent > 0) {
+      toast.success(`Consultation completed! ${labRequestsSent} lab test request(s) sent. Payment required at reception.`);
+    } else if (selectedLabTests.length > 0 && labRequestsSent === 0) {
+      toast.warning('Consultation completed but lab requests failed to send. Please try again.');
     } else {
       toast.success('Consultation completed successfully!');
     }
@@ -1280,10 +1286,26 @@ const handleCompleteConsultation = async () => {
     const token = localStorage.getItem('token');
     let successCount = 0;
     
+    console.log(`Sending ${selectedLabTests.length} lab test requests...`);
+    
     for (const test of selectedLabTests) {
-      // Get test price from labTestsList
+      // Get test details from labTestsList
       const testDetails = labTestsList.find(t => t._id === test._id);
       const testPrice = testDetails?.price || 0;
+      
+      // Determine the category properly
+      let category = 'general';
+      if (testDetails) {
+        if (testDetails.categoryName) {
+          category = testDetails.categoryName;
+        } else if (testDetails.category && typeof testDetails.category === 'object') {
+          category = testDetails.category.name || 'general';
+        } else if (testDetails.category && typeof testDetails.category === 'string') {
+          category = testDetails.category;
+        }
+      } else if (test.category) {
+        category = test.category;
+      }
       
       const labRequestData = {
         patientId: selectedPatient._id,
@@ -1292,7 +1314,7 @@ const handleCompleteConsultation = async () => {
         parentName: selectedPatient.parentName,
         parentPhone: selectedPatient.parentPhone,
         testName: test.name,
-        testCategory: test.category || (testDetails?.category?.name || testDetails?.categoryName || 'general'),
+        testCategory: category,
         parameters: testDetails?.parameters || ['Result'],
         normalRanges: testDetails?.normalRanges || {},
         clinicalInfo: consultationData.chiefComplaint || '',
@@ -1303,8 +1325,11 @@ const handleCompleteConsultation = async () => {
         requestSource: 'doctor',
         paymentStatus: 'pending',  // Important: Payment pending
         testPrice: testPrice,
-        status: 'pending'
+        status: 'pending',
+        resultType: testDetails?.resultType || 'text'
       };
+      
+      console.log(`Sending lab request for ${test.name}:`, labRequestData);
       
       const response = await fetch(`${API_BASE_URL}/api/lab-requests`, {
         method: 'POST',
@@ -1319,17 +1344,23 @@ const handleCompleteConsultation = async () => {
       if (data.success) {
         successCount++;
         console.log(`Lab request created for ${test.name}:`, data.data.requestId);
+        toast.success(`Lab request sent for: ${test.name}`);
       } else {
         console.error(`Failed to create lab request for ${test.name}:`, data.msg);
+        toast.error(`Failed to send lab request for: ${test.name} - ${data.msg || 'Unknown error'}`);
       }
     }
     
     if (successCount > 0) {
       console.log(`${successCount} lab test request(s) sent to laboratory`);
+      toast.success(`${successCount} lab test request(s) sent successfully!`);
+    } else if (selectedLabTests.length > 0) {
+      toast.error('Failed to send lab test requests. Please try again.');
     }
     return successCount;
   } catch (error) {
     console.error('Error sending lab test requests:', error);
+    toast.error('Failed to send lab test requests: ' + error.message);
     return 0;
   }
 };
@@ -1971,59 +2002,71 @@ const handleCompleteConsultation = async () => {
 
       {/* Lab Tests Selection Modal */}
       {showLabTestsModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-6xl w-full max-h-[85vh] flex flex-col shadow-2xl">
-            <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-white rounded-t-2xl z-10">
-              <div><h3 className="text-xl font-bold text-gray-900">Select Lab Tests</h3><p className="text-xs text-gray-500 mt-0.5">Choose tests to send to laboratory</p></div>
-              <button onClick={() => setShowLabTestsModal(false)} className="p-1.5 hover:bg-gray-100 rounded-full"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-4 border-b bg-gray-50">
-              <div className="flex gap-2 mb-3">
-                <button onClick={() => setLabTestType('inventory')} className={`px-4 py-1.5 rounded-lg text-sm font-medium ${labTestType === 'inventory' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700'}`}>From Inventory</button>
-                <button onClick={() => setLabTestType('custom')} className={`px-4 py-1.5 rounded-lg text-sm font-medium ${labTestType === 'custom' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Custom Test</button>
-              </div>
-              {labTestType === 'inventory' ? (
-                <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="Search lab tests..." value={modalSearchTerm} onChange={(e) => setModalSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm" autoFocus /></div>
-              ) : (
-                <div className="space-y-3 bg-white p-4 rounded-lg border">
-                  <input type="text" placeholder="Test name" value={customLabTest.name} onChange={(e) => setCustomLabTest({ ...customLabTest, name: e.target.value })} className="w-full p-2 border rounded-lg text-sm" />
-                  <textarea placeholder="Additional notes" value={customLabTest.notes} onChange={(e) => setCustomLabTest({ ...customLabTest, notes: e.target.value })} className="w-full p-2 border rounded-lg text-sm" rows="2" />
-                  <button onClick={handleAddCustomLabTest} className="w-full py-2 bg-purple-600 text-white rounded-lg text-sm">+ Add Custom Test</button>
-                </div>
-              )}
-            </div>
-            {labTestType === 'inventory' && (
-              <div className="flex-1 overflow-y-auto p-4">
-                {(() => {
-                  const groupedTests = filteredLabTestsModal.reduce((groups, test) => {
-                    const category = test.category || 'Uncategorized';
-                    if (!groups[category]) groups[category] = [];
-                    groups[category].push(test);
-                    return groups;
-                  }, {});
-                  return Object.entries(groupedTests).map(([category, tests]) => (
-                    <div key={category} className="mb-5">
-                      <h4 className="text-sm font-semibold text-purple-700 mb-2 border-b border-purple-200">{category}</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
-                        {tests.map(test => (
-                          <label key={test._id} className={`flex items-center p-2 border rounded-lg cursor-pointer ${selectedLabTests.find(t => t._id === test._id) ? 'border-purple-500 bg-purple-50' : 'border-gray-200'}`}>
-                            <input type="checkbox" checked={!!selectedLabTests.find(t => t._id === test._id)} onChange={() => handleToggleLabTest(test)} className="w-3.5 h-3.5 text-purple-600 rounded" />
-                            <span className="ml-1.5 text-xs text-gray-700 truncate">{test.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-            )}
-            <div className="p-3 border-t bg-gray-50 flex justify-between">
-              <div className="text-xs text-gray-500">{selectedLabTests.length} test(s) selected</div>
-              <button onClick={() => setShowLabTestsModal(false)} className="px-4 py-1.5 border rounded-lg text-sm">Close</button>
-            </div>
+  <div className="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4">
+    <div className="bg-white rounded-2xl max-w-6xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+      <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-white rounded-t-2xl z-10">
+        <div><h3 className="text-xl font-bold text-gray-900">Select Lab Tests</h3><p className="text-xs text-gray-500 mt-0.5">Choose tests to send to laboratory</p></div>
+        <button onClick={() => setShowLabTestsModal(false)} className="p-1.5 hover:bg-gray-100 rounded-full"><X className="w-5 h-5" /></button>
+      </div>
+      <div className="p-4 border-b bg-gray-50">
+        <div className="flex gap-2 mb-3">
+          <button onClick={() => setLabTestType('inventory')} className={`px-4 py-1.5 rounded-lg text-sm font-medium ${labTestType === 'inventory' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700'}`}>From Inventory</button>
+          <button onClick={() => setLabTestType('custom')} className={`px-4 py-1.5 rounded-lg text-sm font-medium ${labTestType === 'custom' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700'}`}>Custom Test</button>
+        </div>
+        {labTestType === 'inventory' ? (
+          <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="Search lab tests..." value={modalSearchTerm} onChange={(e) => setModalSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm" autoFocus /></div>
+        ) : (
+          <div className="space-y-3 bg-white p-4 rounded-lg border">
+            <input type="text" placeholder="Test name" value={customLabTest.name} onChange={(e) => setCustomLabTest({ ...customLabTest, name: e.target.value })} className="w-full p-2 border rounded-lg text-sm" />
+            <textarea placeholder="Additional notes" value={customLabTest.notes} onChange={(e) => setCustomLabTest({ ...customLabTest, notes: e.target.value })} className="w-full p-2 border rounded-lg text-sm" rows="2" />
+            <button onClick={handleAddCustomLabTest} className="w-full py-2 bg-purple-600 text-white rounded-lg text-sm">+ Add Custom Test</button>
           </div>
+        )}
+      </div>
+      {labTestType === 'inventory' && (
+        <div className="flex-1 overflow-y-auto p-4">
+          {(() => {
+            const groupedTests = filteredLabTestsModal.reduce((groups, test) => {
+              // FIX: Properly extract category name from populated category object
+              let categoryName = 'Uncategorized';
+              if (test.category) {
+                if (typeof test.category === 'object' && test.category.name) {
+                  categoryName = test.category.name;
+                } else if (typeof test.category === 'string') {
+                  categoryName = test.category;
+                }
+              } else if (test.categoryName) {
+                categoryName = test.categoryName;
+              }
+              
+              if (!groups[categoryName]) groups[categoryName] = [];
+              groups[categoryName].push(test);
+              return groups;
+            }, {});
+            
+            return Object.entries(groupedTests).map(([category, tests]) => (
+              <div key={category} className="mb-5">
+                <h4 className="text-sm font-semibold text-purple-700 mb-2 border-b border-purple-200">{category}</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
+                  {tests.map(test => (
+                    <label key={test._id} className={`flex items-center p-2 border rounded-lg cursor-pointer ${selectedLabTests.find(t => t._id === test._id) ? 'border-purple-500 bg-purple-50' : 'border-gray-200'}`}>
+                      <input type="checkbox" checked={!!selectedLabTests.find(t => t._id === test._id)} onChange={() => handleToggleLabTest(test)} className="w-3.5 h-3.5 text-purple-600 rounded" />
+                      <span className="ml-1.5 text-xs text-gray-700 truncate">{test.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       )}
+      <div className="p-3 border-t bg-gray-50 flex justify-between">
+        <div className="text-xs text-gray-500">{selectedLabTests.length} test(s) selected</div>
+        <button onClick={() => setShowLabTestsModal(false)} className="px-4 py-1.5 border rounded-lg text-sm">Close</button>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* Medications Selection Modal */}
       {showMedicationsModal && (

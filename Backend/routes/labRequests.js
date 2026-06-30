@@ -13,7 +13,7 @@ router.get('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadmi
   try {
     let query = {};
     
-    // Filter by status
+    // Filter by status (from query param)
     if (req.query.status) {
       query.status = req.query.status;
     }
@@ -38,9 +38,15 @@ router.get('/', protect, authorize('doctor', 'lab-tech', 'reception', 'superadmi
       query.requestedById = req.user.id;
     }
     
-    // For lab tech: show all pending and in-progress
+    // For lab tech: ONLY apply default filter if no status is specified
     if (req.user.role === 'lab-tech') {
-      query.status = { $in: ['pending', 'in-progress'] };
+      // If status is NOT specified in query, show pending and in-progress only
+      // If status IS specified, respect the query filter
+      if (!req.query.status) {
+        query.status = { $in: ['pending', 'in-progress'] };
+      }
+      // If status is specified, we keep whatever status was requested
+      // This allows the LabTechResults page to fetch completed tests
     }
     
     // For reception: show all

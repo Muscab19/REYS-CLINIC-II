@@ -303,14 +303,14 @@ const RegisterPatient = () => {
   };
 
   const handleProcessPayment = () => {
-    const total = calculateTotalFee();
-    if (total >= 0) {  // Allow $0 payments
-      setPaymentAmount(total.toString());
-      setShowPaymentModal(true);
-    } else {
-      toast.error('Please select tests or check fee amount');
-    }
-  };
+  const total = calculateTotalFee();
+  if (total >= 0) {  // Allow $0 payments
+    setPaymentAmount(total.toString());  // Pre-fill with total (0 for free)
+    setShowPaymentModal(true);
+  } else {
+    toast.error('Please select tests or check fee amount');
+  }
+};
 
   const confirmPayment = async () => {
   const totalAmount = calculateTotalFee();
@@ -335,68 +335,79 @@ const RegisterPatient = () => {
   }
   
   setProcessingPayment(true);
-  setFormData(prev => ({
-    ...prev,
-    paymentStatus: 'paid',
-    paidAmount: totalAmount,
-    paymentMethod: paymentMethod,
-    paymentDate: new Date().toISOString()
-  }));
+  
+  // Store the payment amount in the form data for handleSubmit to use
+  // The paymentAmount state already has the value
   
   setShowPaymentModal(false);
-  await handleSubmit(true);
+  await handleSubmit(true);  // handleSubmit will use paymentAmount
   setProcessingPayment(false);
 };
 
   const handleSubmit = async (isPaid = false) => {
-    if (!validateForm()) return;
+  if (!validateForm()) return;
+  
+  setLoading(true);
+  
+  try {
+    const token = localStorage.getItem('token');
     
-    setLoading(true);
+    let totalFee = calculateTotalFee();
+    const subtotal = calculateSubtotal();
+    const discountAmount = calculateDiscountAmount();
     
-    try {
-      const token = localStorage.getItem('token');
-      
-      let totalFee = calculateTotalFee();
-      const subtotal = calculateSubtotal();
-      const discountAmount = calculateDiscountAmount();
-      
-      let labTestDetails = [];
-      let labTestNames = [];
-      
-      if (selectedDepartment === 'doctor') {
-        totalFee = doctorTicketFee;
-      } else if (selectedDepartment === 'lab-tech') {
-        labTestDetails = getSelectedTestsDetails();
-        labTestNames = labTestDetails.map(test => test.name);
+    let labTestDetails = [];
+    let labTestNames = [];
+    
+    if (selectedDepartment === 'doctor') {
+      totalFee = doctorTicketFee;
+    } else if (selectedDepartment === 'lab-tech') {
+      labTestDetails = getSelectedTestsDetails();
+      labTestNames = labTestDetails.map(test => test.name);
+    }
+    
+    // Calculate the actual amount paid
+    // If isPaid is true, use the amount from the payment modal
+    // If not paid, use 0 or formData.paidAmount
+    let actualPaidAmount = 0;
+    if (isPaid) {
+      // Use the amount entered in the payment modal
+      actualPaidAmount = parseFloat(paymentAmount) || 0;
+      // Ensure it doesn't exceed the total fee
+      if (actualPaidAmount > totalFee) {
+        actualPaidAmount = totalFee;
       }
-      
-      const payload = {
-        childName: formData.childName,
-        childAge: parseInt(formData.childAge),
-        childGender: formData.childGender,
-        parentName: formData.parentName,
-        parentPhone: formData.parentPhone,
-        parentEmail: formData.parentEmail,
-        parentAddress: formData.parentAddress,
-        referredTo: formData.referredTo,
-        assignedDoctor: formData.assignedDoctor,
-        assignedLabTech: formData.assignedLabTech,
-        urgency: formData.urgency,
-        paymentStatus: isPaid ? (totalFee > 0 ? 'paid' : 'exempt') : formData.paymentStatus,
-        paidAmount: isPaid ? totalFee : formData.paidAmount,
-        paymentMethod: isPaid ? paymentMethod : formData.paymentMethod,
-        paymentDate: isPaid ? new Date().toISOString() : null,
-        isFollowUp: formData.isFollowUp,
-        previousConsultationId: formData.previousConsultationId,
-        followUpReason: formData.followUpReason,
-        status: formData.referredTo === 'doctor' ? 'pending' : 'pending',
-        ticketFee: totalFee,
-        subtotal: subtotal,
-        discountAmount: discountAmount,
-        discountType: discountType,
-        discountValue: discountValue,
-        discountReason: discountReason
-      };
+    } else {
+      actualPaidAmount = formData.paidAmount || 0;
+    }
+    
+    const payload = {
+      childName: formData.childName,
+      childAge: parseInt(formData.childAge),
+      childGender: formData.childGender,
+      parentName: formData.parentName,
+      parentPhone: formData.parentPhone,
+      parentEmail: formData.parentEmail,
+      parentAddress: formData.parentAddress,
+      referredTo: formData.referredTo,
+      assignedDoctor: formData.assignedDoctor,
+      assignedLabTech: formData.assignedLabTech,
+      urgency: formData.urgency,
+      paymentStatus: isPaid ? (totalFee > 0 ? 'paid' : 'exempt') : formData.paymentStatus,
+      paidAmount: actualPaidAmount,  // <-- FIX: Use the actual paid amount
+      paymentMethod: isPaid ? paymentMethod : formData.paymentMethod,
+      paymentDate: isPaid ? new Date().toISOString() : null,
+      isFollowUp: formData.isFollowUp,
+      previousConsultationId: formData.previousConsultationId,
+      followUpReason: formData.followUpReason,
+      status: formData.referredTo === 'doctor' ? 'pending' : 'pending',
+      ticketFee: totalFee,  // This is the discounted total
+      subtotal: subtotal,   // This is the original subtotal before discount
+      discountAmount: discountAmount,
+      discountType: discountType,
+      discountValue: discountValue,
+      discountReason: discountReason
+    };
       
       if (formData.referredTo === 'doctor') {
         payload.visitReason = formData.visitReason;
@@ -1178,3 +1189,6 @@ const Printer = ({ className }) => <svg className={className} xmlns="http://www.
 const UserPlus = ({ className }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>;
 
 export default RegisterPatient;
+
+
+// confirmPayment  
